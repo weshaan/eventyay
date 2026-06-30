@@ -212,30 +212,26 @@ export default {
 <style lang="stylus" scoped>
 .c-interpretation-bar
 	box-sizing: border-box
-	position: fixed
-	top: var(--interpretation-bar-top, auto)
-	left: var(--interpretation-bar-left, 0)
-	width: var(--interpretation-bar-width, 100%)
-	z-index: 90
 	display: flex
 	align-items: center
-	gap: 16px
-	flex: 0 0 auto
-	width: 100%
-	min-height: 56px
-	padding: 10px 16px
+	gap: 12px
+	flex: 1 1 auto
+	min-width: 0
+	height: 100%
+	padding: 0 16px
 	background-color: #0a0a0a
-	border-top: 1px solid rgba(255, 255, 255, 0.12)
 
 .caption-text
 	flex: 1
 	min-width: 0
-	text-align: center
+	text-align: left
 	color: #fff
-	font-size: 18px
-	line-height: 1.45
+	font-size: 16px
+	line-height: 1.35
 	font-weight: 500
-	word-break: break-word
+	white-space: nowrap
+	overflow: hidden
+	text-overflow: ellipsis
 	&.is-placeholder
 		color: rgba(255, 255, 255, 0.42)
 		font-weight: 400

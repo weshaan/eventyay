@@ -6,10 +6,11 @@
 		reactions-overlay(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
 		upcoming-stream-countdown(:room="room")
 		.stage-tool-blocker(v-if="activeStageTool !== null", @click="activeStageTool = null")
-		.stage-tools(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
-			// Added dropdown menu for audio translations near the reactions bar
-			reactions-bar(:expanded="true", @expand="activeStageTool = 'reaction'")
-			AudioTranslationDropdown(v-if="languages.length > 1", :languages="languages", @languageChanged="handleLanguageChange")
+		.stage-tools(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']", :class="{'stage-tools--has-captions': interpretationCaptionsActive}")
+			.stage-tools-start
+				interpretation-caption-bar(v-if="streamModule", :module="streamModule")
+				reactions-bar(:expanded="true", @expand="activeStageTool = 'reaction'")
+				AudioTranslationDropdown(v-if="languages.length > 1", :languages="languages", @languageChanged="handleLanguageChange")
 	media-source-placeholder(v-else-if="modules['call.bigbluebutton'] || modules['call.zoom']")
 	roulette(v-else-if="modules['networking.roulette'] && $features.enabled('roulette')", :module="modules['networking.roulette']", :room="room")
 	landing-page(v-else-if="modules['page.landing']", :module="modules['page.landing']")
@@ -40,6 +41,7 @@ import StaticPage from 'components/StaticPage'
 import IframePage from 'components/IframePage'
 import Exhibition from 'components/Exhibition'
 import ReactionsBar from 'components/ReactionsBar'
+import InterpretationCaptionBar from 'components/InterpretationCaptionBar'
 import ReactionsOverlay from 'components/ReactionsOverlay'
 import Roulette from 'components/Roulette'
 import UserListPage from 'components/UserListPage'
@@ -60,6 +62,7 @@ export default {
 		StaticPage,
 		IframePage,
 		ReactionsBar,
+		InterpretationCaptionBar,
 		ReactionsOverlay,
 		UserListPage,
 		Roulette,
@@ -93,6 +96,10 @@ export default {
 				if (this.modules[key]) return this.modules[key]
 			}
 			return null
+		},
+		interpretationCaptionsActive() {
+			const cfg = this.streamModule?.config?.interpretation
+			return !!(cfg && cfg.enabled)
 		},
 		unreadTabsClasses() {
 			return Object.entries(this.unreadTabs).filter(([tab, value]) => value).map(([tab]) => `tab-${tab}-unread`)
@@ -205,11 +212,39 @@ export default {
 	.stage-tools
 		flex: none
 		display: flex
+		justify-content: flex-start
+		align-items: stretch
+		width: 100%
 		height: 56px
-		justify-content: flex-end
-		align-items: center
 		user-select: none
 		overflow: hidden
+		background-color: $clr-white
+		padding: 0
+		.stage-tools-start
+			display: flex
+			align-items: center
+			gap: 8px
+			width: 100%
+			min-width: 0
+			.c-interpretation-bar
+				flex: 1 1 auto
+				min-width: 0
+			.c-reactions-bar
+				flex: none
+				position: relative
+				right: auto
+				left: auto
+				margin: 0 12px 0 4px
+				padding: 4px 0
+				height: 56px
+				align-self: center
+				.actions
+					position: relative
+					bottom: auto
+					left: auto
+					transform: none
+				&.expanded .actions
+					transform: none
 		.stage-tool
 			font-size: 16px
 			color: $clr-secondary-text-light
@@ -228,8 +263,6 @@ export default {
 				height: 2px
 				width: calc(100% - 16px)
 				background-color: var(--clr-primary)
-		+below('m')
-			justify-content: space-between
 	.stage-tool-blocker
 		position: fixed
 		top: 0
