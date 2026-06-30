@@ -102,6 +102,7 @@ dependencies = [
     "eventyay-bitpay @ git+https://github.com/fossasia/eventyay-bitpay.git@main",
     "eventyay-socialmedia @ git+https://github.com/fossasia/eventyay-socialmedia.git@main",
     "exhibition @ git+https://github.com/fossasia/eventyay-exhibition.git@main",
+    "eventyay-interpretation",
     "eventyay-teamshifts @ git+https://github.com/fossasia/eventyay-teamshifts.git@main",
     "execnet>=2.1.2",
     "fido2>=2.2.0",
@@ -259,6 +260,9 @@ test = [
     "pytest-sugar>=1.1.1",
     "pytest-xdist>=3.6.1",
 ]
+
+[tool.uv.sources]
+eventyay-interpretation = { path = "../../eventyay-interpretation", editable = true }
 
 [tool.ruff]
 line-length = 120

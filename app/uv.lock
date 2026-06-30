@@ -1178,6 +1178,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "eventyay-interpretation"
+source = { editable = "../../eventyay-interpretation" }
+
+[[package]]
 name = "eventyay-paypal"
 version = "1.0.0"
 source = { git = "https://github.com/fossasia/eventyay-paypal.git?rev=main#a6d9cbdd28ff567ac336cb0242d09a8e5aa0cd7c" }
@@ -1284,6 +1288,7 @@ dependencies = [
     { name = "emoji" },
     { name = "et-xmlfile" },
     { name = "eventyay-bitpay" },
+    { name = "eventyay-interpretation" },
     { name = "eventyay-paypal" },
     { name = "eventyay-socialmedia" },
     { name = "eventyay-stripe" },
@@ -1519,6 +1524,7 @@ requires-dist = [
     { name = "emoji", specifier = ">=2.15.0" },
     { name = "et-xmlfile", specifier = ">=2.0.0" },
     { name = "eventyay-bitpay", git = "https://github.com/fossasia/eventyay-bitpay.git?rev=main" },
+    { name = "eventyay-interpretation", editable = "../../eventyay-interpretation" },
     { name = "eventyay-paypal", git = "https://github.com/fossasia/eventyay-paypal.git?rev=main" },
     { name = "eventyay-socialmedia", git = "https://github.com/fossasia/eventyay-socialmedia.git?rev=main" },
     { name = "eventyay-stripe", git = "https://github.com/fossasia/eventyay-stripe.git?rev=main" },
