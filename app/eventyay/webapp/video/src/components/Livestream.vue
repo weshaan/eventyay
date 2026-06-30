@@ -143,7 +143,6 @@ export default {
 		},
 		ttsUrl() {
 			const cfg = this.interpretationConfig
-			console.log('[TTS] interpretationConfig:', cfg)
 			if (!cfg) return null
 			if (cfg.tts_url) return cfg.tts_url
 			if (cfg.url) return cfg.url
@@ -427,7 +426,6 @@ export default {
 			}
 		},
 		toggleTts() {
-			console.log('[TTS] toggleTts called, ttsEnabled:', this.ttsEnabled, 'ttsUrl:', this.ttsUrl)
 			if (this.ttsEnabled) {
 				this.stopTtsStream()
 				this.ttsEnabled = false
