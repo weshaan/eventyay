@@ -44,7 +44,6 @@ export default new Vuex.Store({
 				.filter(Boolean)
 		),
 		youtubeTransUrl: null,
-		interpretationCaption: ''
 	},
 	getters: {
 		hasPermission(state) {
@@ -95,9 +94,6 @@ export default new Vuex.Store({
 		},
 		reportMediaSourcePlaceholderRect(state, rect) {
 			state.mediaSourcePlaceholderRect = rect
-		},
-		setInterpretationCaption(state, text) {
-			state.interpretationCaption = text || ''
 		},
 		setUserLocale(state, locale) {
 			state.userLocale = locale

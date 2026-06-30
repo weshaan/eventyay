@@ -28,6 +28,7 @@
 			//- defining keys like this keeps the playing dom element alive for uninterupted transitions
 			//- Single MediaSource for room streaming (persists across navigation to prevent stream restart)
 			media-source(v-if="streamingRoom && user.profile.greeted && !hasFatalError(streamingRoom)", ref="mediaSource", :room="streamingRoom", :background="isStreamInBackground", :key="streamingRoom.id", :role="isStreamInBackground ? null : 'main'", @close="backgroundRoom = null")
+			interpretation-caption-bar(v-if="showInterpretationCaptionBar", :module="interpretationStreamModule")
 			media-source(v-if="call", ref="channelCallSource", :call="call", :background="call.channel !== $route.params.channelId", :key="call.id", @close="$store.dispatch('chat/leaveCall')")
 			#media-source-iframes
 			notifications(:hasBackgroundMedia="isStreamInBackground")
@@ -50,6 +51,7 @@ import { inferRoomType, inferType } from 'lib/room-types'
 import AppBar from 'components/AppBar'
 import RoomsSidebar from 'components/RoomsSidebar'
 import MediaSource from 'components/MediaSource'
+import InterpretationCaptionBar from 'components/InterpretationCaptionBar'
 import Notifications from 'components/notifications'
 import GreetingPrompt from 'components/profile/GreetingPrompt'
 
@@ -58,7 +60,7 @@ const stageToolModules = ['livestream.native', 'livestream.youtube', 'livestream
 const chatbarModules = ['chat.native', 'question', 'poll']
 
 export default {
-	components: { AppBar, RoomsSidebar, MediaSource, GreetingPrompt, Notifications },
+	components: { AppBar, RoomsSidebar, MediaSource, InterpretationCaptionBar, GreetingPrompt, Notifications },
 	provide() {
 		return {
 			eventUrl: window.eventyay?.eventUrl || '',
@@ -162,8 +164,6 @@ export default {
 			if (this.hasFatalError(this.room)) return false
 			return this.room?.modules.some(module => mediaModules.includes(module.type))
 		},
-		// Single source of truth for which room should be streaming
-		// Returns the current room if it has media, otherwise the background room
 		streamingRoom() {
 			if (this.roomHasMedia) return this.room
 			if (this.backgroundRoom && !this.hasFatalError(this.backgroundRoom)) return this.backgroundRoom
@@ -173,6 +173,19 @@ export default {
 		// True when we have a background room that's different from the current room
 		isStreamInBackground() {
 			return this.backgroundRoom && this.room !== this.backgroundRoom
+		},
+		interpretationStreamModule() {
+			const room = this.streamingRoom
+			if (!room) return null
+			for (const type of ['livestream.native', 'livestream.youtube', 'livestream.iframe']) {
+				const mod = room.modules.find(m => m.type === type)
+				if (mod) return mod
+			}
+			return null
+		},
+		showInterpretationCaptionBar() {
+			const cfg = this.interpretationStreamModule?.config?.interpretation
+			return !!(cfg && cfg.enabled && !this.isStreamInBackground)
 		},
 		stageStreamCollapsed() {
 			if (this.$mq.above.m) return false
@@ -192,17 +205,28 @@ export default {
 				(this.room?.modules.length > 1 && this.room?.modules.some(module => chatbarModules.includes(module.type))) ||
 				(this.call && this.call.channel === this.$route.params.channelId)
 			)
+			const interpOffset = this.showInterpretationCaptionBar ? ' - 56px' : ''
 			const style = {
 				'--chatbar-width': hasChatbar ? '380px' : '0px',
-				'--mobile-media-height': this.stageStreamCollapsed ? '56px' : hasChatbar ? 'min(56.25vw, 40vh)' : (hasStageTools ? 'calc(var(--vh100) - 48px - 2 * 56px)' : 'calc(var(--vh100) - 48px - 56px)'),
-				'--has-stagetools': hasStageTools ? '1' : '0'
+				'--mobile-media-height': this.stageStreamCollapsed ? '56px' : hasChatbar ? `min(56.25vw, calc(40vh${interpOffset}))` : (hasStageTools ? `calc(var(--vh100) - 48px - 2 * 56px${interpOffset})` : `calc(var(--vh100) - 48px - 56px${interpOffset})`),
+				'--has-stagetools': hasStageTools ? '1' : '0',
+				'--interpretation-bar-height': this.showInterpretationCaptionBar ? '56px' : '0px',
 			}
 			if (this.mediaSourcePlaceholderRect) {
+				const barHeight = this.showInterpretationCaptionBar ? 56 : 0
+				const top = this.mediaSourcePlaceholderRect.top
+				const left = this.mediaSourcePlaceholderRect.left
+				const width = this.mediaSourcePlaceholderRect.width
+				const fullHeight = this.mediaSourcePlaceholderRect.height
+				const videoHeight = Math.max(0, fullHeight - barHeight)
 				Object.assign(style, {
-					'--mediasource-placeholder-top': this.mediaSourcePlaceholderRect.top + 'px',
-					'--mediasource-placeholder-left': this.mediaSourcePlaceholderRect.left + 'px',
-					'--mediasource-placeholder-height': this.mediaSourcePlaceholderRect.height + 'px',
-					'--mediasource-placeholder-width': this.mediaSourcePlaceholderRect.width + 'px'
+					'--mediasource-placeholder-top': top + 'px',
+					'--mediasource-placeholder-left': left + 'px',
+					'--mediasource-placeholder-height': videoHeight + 'px',
+					'--mediasource-placeholder-width': width + 'px',
+					'--interpretation-bar-top': (top + videoHeight) + 'px',
+					'--interpretation-bar-left': left + 'px',
+					'--interpretation-bar-width': width + 'px',
 				})
 			}
 			return style
