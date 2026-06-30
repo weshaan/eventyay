@@ -57,7 +57,6 @@ from eventyay.control.forms.server_management import (
     EventForm,
 )
 from eventyay.base.models.log import LogEntry
-from eventyay.control.signals import video_admin_event_forms
 from eventyay.control.tasks import clear_event_data
 
 
@@ -394,51 +393,7 @@ class EventCreate(FormsetMixin, AdminBase, CreateView):
             return self.form_invalid(form)
 
 
-class VideoAdminPluginFormsMixin:
-    @cached_property
-    def plugin_forms(self):
-        forms = []
-        for rec, resp in video_admin_event_forms.send(
-            sender=self.object,
-            request=self.request,
-        ):
-            if isinstance(resp, (list, tuple)):
-                forms.extend(f for f in resp if f is not None)
-            elif resp is not None:
-                forms.append(resp)
-        return forms
-
-    def _save_plugin_forms(self):
-        for pf in self.plugin_forms:
-            disconnect_key = getattr(pf, "disconnect_action_post_key", None)
-            if disconnect_key and disconnect_key in self.request.POST:
-                if hasattr(pf, "run_disconnect_action"):
-                    pf.run_disconnect_action(self.request)
-                continue
-            connect_key = getattr(pf, "connect_action_post_key", None)
-            if connect_key and connect_key in self.request.POST:
-                if pf.has_changed():
-                    pf.save()
-                if hasattr(pf, "run_connect_action"):
-                    pf.run_connect_action(self.request)
-                continue
-            test_key = getattr(pf, "test_action_post_key", None)
-            if test_key and test_key in self.request.POST:
-                if pf.has_changed():
-                    pf.save()
-                if hasattr(pf, "run_test_action"):
-                    pf.run_test_action(self.request)
-                continue
-            if pf.has_changed():
-                pf.save()
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["plugin_forms"] = self.plugin_forms
-        return ctx
-
-
-class EventUpdate(VideoAdminPluginFormsMixin, FormsetMixin, AdminBase, UpdateView):
+class EventUpdate(FormsetMixin, AdminBase, UpdateView):
     template_name = "control/event_update.html"
     form_class = EventForm
     queryset = Event.objects.all()
@@ -452,7 +407,6 @@ class EventUpdate(VideoAdminPluginFormsMixin, FormsetMixin, AdminBase, UpdateVie
 
     def form_valid(self, form):
         self.formset.save()
-        self._save_plugin_forms()
         LogEntry.objects.create(
             content_object=self.get_object(),
             user=self.request.user,
@@ -465,12 +419,7 @@ class EventUpdate(VideoAdminPluginFormsMixin, FormsetMixin, AdminBase, UpdateVie
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         form = self.get_form()
-        plugin_forms = self.plugin_forms
-        if (
-            form.is_valid()
-            and self.formset.is_valid()
-            and all(pf.is_valid() for pf in plugin_forms)
-        ):
+        if form.is_valid() and self.formset.is_valid():
             return self.form_valid(form)
         else:
             return self.form_invalid(form)
