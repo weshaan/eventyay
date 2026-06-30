@@ -17,6 +17,7 @@
             <link rel="stylesheet" type="text/css" href="{% static "common/css/_component_nav_mobile.css" %}" />
             <link rel="stylesheet" type="text/css" href="{% static 'common/css/_markdown_editor.css' %}" />
             <link rel="stylesheet" type="text/css" href="{% static 'leaflet/leaflet.css' %}" />
+            <link rel="stylesheet" type="text/css" href="{% static 'eventyay-common/css/language-grid.css' %}" />
 		{% endcompress %}
         {% if DEBUG %}
             <script type="text/javascript" src="{% url 'javascript-catalog' lang=request.LANGUAGE_CODE %}"
@@ -44,6 +45,7 @@
             <script type="text/javascript" src="{% static "pretixcontrol/js/clipboard.js" %}"></script>
             <script type="text/javascript" src="{% static "pretixcontrol/js/menu.js" %}"></script>
             <script type="text/javascript" src="{% static "pretixcontrol/js/sb-admin-2.js" %}"></script>
+            <script type="module" src="{% static "pretixcontrol/js/ui/confirmDialog.js" %}"></script>
 		    <script type="text/javascript" src="{% static "pretixcontrol/js/ui/main.js" %}"></script>
             <script type="text/javascript" src="{% static "pretixcontrol/js/ui/quota.js" %}"></script>
             <script type="text/javascript" src="{% static "pretixcontrol/js/ui/subevent.js" %}"></script>
@@ -73,6 +75,7 @@
             <script defer src="{% static 'common/js/base.js' %}"></script>
             <script defer src="{% static 'common/js/formTools.js' %}"></script>
             <script type="module" src="{% static 'eventyay-common/js/ajax-filter.js' %}"></script>
+            <script type="module" src="{% static 'eventyay-common/js/language-grid.js' %}"></script>
 		{% endcompress %}
         {# Keep toastuiLoader outside the compress block so document.currentScript keeps data-toastui-* (see common/js/toastuiLoader.js). #}
         <script defer src="{% static 'common/js/toastuiLoader.js' %}" data-toastui-css="{% static 'vendored/toastui-editor/toastui-editor.min.css' %}" data-toastui-js="{% static 'vendored/toastui-editor/toastui-editor.min.js' %}" data-toastui-lang="{{ request.LANGUAGE_CODE|slice:':2' }}" data-toastui-t-undo="{% trans 'Undo' %}" data-toastui-t-redo="{% trans 'Redo' %}" data-toastui-t-underline="{% trans 'Underline' %}"></script>
@@ -450,5 +453,17 @@
                 </div>
             </div>
         </div>
+        <dialog id="pretix-confirm-dialog" class="pretix-confirm-dialog"
+                aria-labelledby="pretix-confirm-dialog-title"
+                aria-describedby="pretix-confirm-dialog-message">
+            <div class="pretix-confirm-dialog__content">
+                <h4 class="pretix-confirm-dialog__title" id="pretix-confirm-dialog-title"></h4>
+                <p class="pretix-confirm-dialog__message" id="pretix-confirm-dialog-message"></p>
+                <div class="pretix-confirm-dialog__actions text-right">
+                    <button type="button" class="btn btn-default" id="pretix-confirm-dialog-cancel"></button>
+                    <button type="button" class="btn btn-primary" id="pretix-confirm-dialog-confirm"></button>
+                </div>
+            </div>
+        </dialog>
 	</body>
 </html>

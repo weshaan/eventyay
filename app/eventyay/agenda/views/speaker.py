@@ -1,5 +1,6 @@
+import datetime as dt
 import io
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import urljoin, urlparse
 
 import vobject
 from django.conf import settings
@@ -16,13 +17,18 @@ from django.views.generic import DetailView, ListView, TemplateView, View
 from django_context_decorator import context
 from i18nfield.utils import I18nJSONEncoder
 
+from eventyay.agenda.export_resources import public_resource_attachments, public_resource_links
 from eventyay.agenda.views.utils import (
     WipAgendaPreviewPageMixin,
+    build_google_calendar_url,
     build_speaker_schedule_json,
+    build_speakers_list_schedule_json,
     is_public_speakers_empty,
+    is_public_speakers_list_empty,
     redirect_to_presale_with_warning,
+    redirect_when_public_speakers_unavailable,
+    speaker_profile_display_order,
 )
-from eventyay.talk_rules.agenda import agenda_speaker_talks
 from eventyay.base.models import SpeakerProfile, TalkQuestionTarget, User
 from eventyay.common.text.path import safe_filename
 from eventyay.common.urls import get_base_url
@@ -33,6 +39,11 @@ from eventyay.common.views.mixins import (
     PermissionRequired,
     SocialMediaCardMixin,
 )
+from eventyay.talk_rules.agenda import (
+    agenda_speaker_talks,
+    can_list_released_schedule_speakers,
+    should_hide_public_speaker_sessions,
+)
 
 
 class SpeakerList(EventPermissionRequired, Filterable, ListView):
@@ -41,18 +52,25 @@ class SpeakerList(EventPermissionRequired, Filterable, ListView):
     permission_required = 'base.list_schedule'
     default_filters = ('user__fullname__icontains',)
 
+    def has_permission(self):
+        return can_list_released_schedule_speakers(self.request.user, self.request.event)
+
     def dispatch(self, request, *args, **kwargs):
-        if is_public_speakers_empty(request):
+        if is_public_speakers_list_empty(request):
             return redirect_to_presale_with_warning(request, _('No published speakers.'))
+        if not can_list_released_schedule_speakers(request.user, request.event):
+            return redirect_when_public_speakers_unavailable(request)
         return super().dispatch(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = (
-            SpeakerProfile.objects.filter(user__in=self.request.event.speakers, event=self.request.event)
-            .select_related('user', 'event', 'event__organizer')
-            .order_by('user__fullname')
-        )
+        event = self.request.event
+        qs = SpeakerProfile.objects.filter(user__in=event.speakers, event=event)
+        qs = qs.select_related('user', 'event', 'event__organizer').order_by(*speaker_profile_display_order())
         return self.filter_queryset(qs)
+
+    @context
+    def schedule_json(self):
+        return build_speakers_list_schedule_json(self.request)
 
     def get_context_data(self, **kwargs):
         return super().get_context_data(**kwargs)
@@ -85,6 +103,14 @@ class SpeakerView(PermissionRequired, TemplateView):
     @context
     @cached_property
     def talks(self):
+        if should_hide_public_speaker_sessions(
+            self.request.user,
+            self.request.event,
+            wip_preview=self.wip_preview,
+        ):
+            from eventyay.base.models import TalkSlot
+
+            return TalkSlot.objects.none()
         return (
             agenda_speaker_talks(
                 self.request.event,
@@ -244,18 +270,8 @@ class SpeakerTalksExportView(EventPermissionRequired, View):
                         }
                         for p in sub.speakers.all()
                     ],
-                    'links': [
-                        {'title': localize_event_text(r.description), 'url': r.link}
-                        for r in sub.resources.all()
-                        if event.cfp.is_resource_public(r)
-                        if r.link
-                    ],
-                    'attachments': [
-                        {'title': localize_event_text(r.description), 'url': r.resource.url}
-                        for r in sub.resources.all()
-                        if event.cfp.is_resource_public(r)
-                        if not r.link
-                    ],
+                    'links': public_resource_links(sub, event),
+                    'attachments': public_resource_attachments(sub, event),
                 }
             )
         data = {
@@ -328,24 +344,24 @@ class SpeakerTalksCalendarRedirectView(EventPermissionRequired, View):
                 ),
             )
             webcal_url = ical_url.replace('https://', 'webcal://').replace('http://', 'webcal://')
-            return HttpResponseRedirect(webcal_url)
+            response = HttpResponse(status=302)
+            response['Location'] = webcal_url
+            return response
         raise Http404()
 
     def google_calendar_redirect(self, slot, request):
         sub = slot.submission
         start = slot.start
         end = slot.real_end
-        dates = f'{start:%Y%m%dT%H%M%SZ}/{end:%Y%m%dT%H%M%SZ}'
+        if not start or not end:
+            raise Http404()
+        start_utc = start.astimezone(dt.UTC)
+        end_utc = end.astimezone(dt.UTC)
+        dates = f'{start_utc:%Y%m%dT%H%M%SZ}/{end_utc:%Y%m%dT%H%M%SZ}'
         title = localize_event_text(sub.title)
         location = localize_event_text(slot.room.name) if slot.room else ''
         details = localize_event_text(sub.abstract) if request.event.cfp.public_abstract else ''
-        url = (
-            'https://calendar.google.com/calendar/render?action=TEMPLATE'
-            f'&text={quote(str(title))}'
-            f'&dates={dates}'
-            f'&location={quote(str(location))}'
-            f'&details={quote(str(details))}'
-        )
+        url = build_google_calendar_url(title, dates, location, details)
         return HttpResponseRedirect(url)
 
 

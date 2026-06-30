@@ -4,7 +4,8 @@
 		.rooms-bar(ref="roomsBar")
 			.rooms-inner(:style="{'--total-rooms': rooms.length, 'min-width': scrollContentWidth ? (scrollContentWidth + 'px') : null}")
 				.room
-				.room(v-for="(room, index) of rooms") {{ getLocalizedString(room.name) }}
+				.room(v-for="(room, index) of rooms", :key="room.id || index")
+					span.room-name(:title="getLocalizedString(room.name)") {{ getLocalizedString(room.name) }}
 					span.room-description(v-if="getLocalizedString(room.description)", @mouseenter="showRoomTooltip($event, room)", @mouseleave="hideRoomTooltip") ?
 				.room(v-if="hasSessionsWithoutRoom") no location
 		.room-tooltip(v-if="roomTooltip.visible", :style="roomTooltipStyle") {{ roomTooltip.text }}
@@ -28,6 +29,7 @@
 					:timezone="timezone",
 					:style="getSessionStyle(session)",
 					:showAbstract="false", :showRoom="false",
+					:showSessionType="true",
 					:showFavCount="showFavCount",
 					:faved="favSet.has(session.id)",
 					:hasAmPm="hasAmPm",
@@ -51,7 +53,8 @@
 			.print-chunk
 				.print-rooms-bar(:style="{'--total-rooms': chunk.length}")
 					.room
-					.room(v-for="room of chunk") {{ getLocalizedString(room.name) }}
+					.room(v-for="(room, index) of chunk", :key="room.id || index")
+						span.room-name {{ getLocalizedString(room.name) }}
 				.print-grid(:style="getPrintChunkGridStyle(chunk)")
 					template(v-for="slice of visibleTimeslices")
 						.timeslice(:class="getSliceClasses(slice)", :style="getSliceStyle(slice)") {{ getSliceLabel(slice) }}
@@ -65,6 +68,7 @@
 							:timezone="timezone",
 							:style="getChunkSessionStyle(session, chunk)",
 							:showAbstract="false", :showRoom="false",
+							:showSessionType="true",
 							:showFavCount="showFavCount",
 							:faved="favSet.has(session.id)",
 							:hasAmPm="hasAmPm",
@@ -128,6 +132,9 @@ export default {
 			type: Number,
 			default: 30
 		}
+	},
+	inject: {
+		translationMessages: { default: () => ({}) }
 	},
 	data () {
 		return {
@@ -297,6 +304,12 @@ export default {
 			})
 			// remove gap at the end of the schedule
 			if (compactedSlices[compactedSlices.length - 1].gap) compactedSlices.pop()
+			for (let i = 0; i < compactedSlices.length; i++) {
+				const next = compactedSlices[i + 1]
+				if (next?.datebreak || !next) {
+					compactedSlices[i].dayEnd = true
+				}
+			}
 			return compactedSlices
 		},
 		visibleTimeslices () {
@@ -489,7 +502,8 @@ export default {
 		getSliceClasses (slice) {
 			return {
 				datebreak: slice.datebreak,
-				gap: slice.gap
+				gap: slice.gap,
+				'day-end': slice.dayEnd
 			}
 		},
 		getSliceStyle (slice) {
@@ -530,7 +544,7 @@ export default {
 		},
 		scrollToDayStart (day) {
 			const dayStr = moment.isMoment(day) ? day.clone().tz(this.timezone).startOf('day').format('YYYY-MM-DD') : day
-			const el = this.$el.querySelector(`[data-slice-day="${dayStr}"]`)
+			const el = this.$el.querySelector(`.timeslice.datebreak[data-slice-day="${dayStr}"]`)
 			if (!el) return
 			this.scrollElementIntoViewWithClearance(el)
 		},
@@ -606,8 +620,9 @@ export default {
 			document.addEventListener('mouseup', onMouseUp)
 		},
 		onIntersect (entries) {
-			const entry = entries.sort((a, b) => b.ts - a.ts).find(entry => entry.isIntersecting)
-			if (!entry) return
+			const intersecting = entries.filter(entry => entry.isIntersecting)
+			if (!intersecting.length) return
+			const entry = intersecting.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0]
 			const dayStr = entry.target.dataset.sliceDay
 			if (!dayStr || dayStr === this.currentDay) return
 			// Only update the active day indicator — don't trigger a scroll jump.
@@ -650,9 +665,16 @@ export default {
 				display: flex
 				justify-content: center
 				align-items: center
+				min-width: 0
+				gap: 0.4em
 				font-size: 18px
 				background-color: $clr-white
 				padding: 8px 4px
+				.room-name
+					min-width: 0
+					overflow: hidden
+					white-space: nowrap
+					text-overflow: ellipsis
 				.room-description
 					display: inline-flex
 					justify-content: center
@@ -746,6 +768,7 @@ export default {
 		&.datebreak
 			font-weight: 700
 			border-top: 3px solid $clr-dividers-light
+			border-bottom: 3px solid $clr-dividers-light
 			white-space: pre
 			padding-top: 2px
 			font-size: 12px
@@ -774,6 +797,9 @@ export default {
 		width: 100%
 		&.datebreak
 			height: 3px
+		&.day-end
+			height: 3px
+			background-color: $clr-grey-500
 	.now
 		z-index: 20
 		position: sticky
@@ -859,6 +885,12 @@ export default {
 						font-weight: 600
 						padding: 8px 4px
 						border-bottom: 2px solid #ccc
+						min-width: 0
+						.room-name
+							display: block
+							overflow: hidden
+							white-space: nowrap
+							text-overflow: ellipsis
 				.print-grid
 					display: grid
 					grid-template-columns: 78px repeat(var(--total-rooms), 1fr) auto

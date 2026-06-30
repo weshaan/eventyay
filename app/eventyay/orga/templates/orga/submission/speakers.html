@@ -18,7 +18,7 @@
     {% for speaker in speakers %}
         <div class="card mb-3"><div class="card-body">
             <h3 class="card-title">
-                <a href="{% url "orga:speakers.view" event=request.event.slug code=speaker.user.code %}">
+                <a href="{% url 'orga:speakers.view' organizer=request.event.organizer.slug event=request.event.slug code=speaker.user.code %}">
                     {{ speaker.user.get_display_name }}
                 </a>
             </h3>
@@ -48,7 +48,8 @@
                     {{ speaker.avatar_license|truncatewords:200 }}
                 </p>
             {% endif %}
-            {% if speaker.email %}
+            {% has_event_perm "base.orga_view_speaker_emails" request.user request request.event as can_view_speaker_emails %}
+            {% if speaker.email and can_view_speaker_emails %}
                 <p class="card-text">
                     <strong>{% translate "E-Mail" %}:</strong>
                     {{ speaker.email }}
@@ -102,7 +103,7 @@
                         {% translate "Send email" %}
                     </a>
                 {% endif %}
-                <a href="{% url "orga:speakers.view" event=request.event.slug code=speaker.user.code %}"
+                <a href="{% url 'orga:speakers.view' organizer=request.event.organizer.slug event=request.event.slug code=speaker.user.code %}"
                    class="btn btn-info">
                     <i class="fa fa-edit"></i> {{ phrases.base.edit }}
                 </a>

@@ -22,6 +22,7 @@ from django_scopes import scope
 from i18nfield.fields import I18nTextField
 from qrcode.image.svg import SvgPathFillImage
 
+from eventyay.agenda.export_resources import enriched_resource_entry
 from eventyay.agenda.signals import register_recording_provider
 from eventyay.agenda.tasks import export_schedule_html
 from eventyay.base.models.event import default_feature_flags
@@ -890,11 +891,7 @@ class Schedule(PretalxModel):
             'event_start': self.event.date_from.isoformat(),
             'event_end': self.event.date_to.isoformat(),
             'content_locales': self.event.content_locales if show_content_locale else [],
-            'feature_flags': {
-                'session_popularity_enabled': popularity_enabled,
-                'session_popularity_show_on_calendar': show_popularity_calendar,
-                'session_popularity_show_on_list': show_popularity_list,
-            },
+            'feature_flags': self.event.schedule_client_feature_flags(),
         }
         show_do_not_record = self.event.cfp.request_do_not_record
         show_abstract = self.event.cfp.public_abstract
@@ -962,13 +959,9 @@ class Schedule(PretalxModel):
                             talk_data['stream_type'] = match.stream_type
                 if enrich:
                     talk_data['resources'] = [
-                        {
-                            'resource': resource.resource.url if resource.resource else resource.link,
-                            'description': str(resource.description),
-                            'link': resource.link,
-                        }
+                        enriched_resource_entry(resource)
                         for resource in talk.submission.resources.all()
-                        if (resource.resource or resource.link) and (show_slides or resource.kind != 'slides')
+                        if resource.url and (show_slides or resource.kind != 'slides')
                     ]
                     talk_data['answers'] = [
                         {
@@ -1031,6 +1024,7 @@ class Schedule(PretalxModel):
                 'name': room.name,
                 'description': room.description if room.description else '',
                 'video_url': getattr(room, 'video_url', ''),
+                'has_interpretation': room.has_interpretation,
             }
             for room in sorted(rooms, key=lambda r: (r.position if r.position is not None else 9999, r.id))
         ]
