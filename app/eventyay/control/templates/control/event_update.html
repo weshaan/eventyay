@@ -76,6 +76,16 @@
         <script>jQuery(function($) { $('#formset').formset({ animateForms: false, reorderMode: 'dom' }); });</script>
     </div>
 
+    {% for pf in plugin_forms %}
+        <hr>
+        <h3>{{ pf.title }}</h3>
+        {% if pf.template %}
+            {% include pf.template with form=pf %}
+        {% else %}
+            {{ pf.as_p }}
+        {% endif %}
+    {% endfor %}
+
     <div class="video-admin-btn-row">
         <button type="submit" class="btn btn-primary">
             <span class="fa fa-save"></span> {% trans "Save" %}
