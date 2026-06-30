@@ -43,7 +43,8 @@ export default new Vuex.Store({
 				.map((d) => normalizeIframeConsentDomain(d))
 				.filter(Boolean)
 		),
-		youtubeTransUrl: null
+		youtubeTransUrl: null,
+		interpretationCaption: ''
 	},
 	getters: {
 		hasPermission(state) {
@@ -94,6 +95,9 @@ export default new Vuex.Store({
 		},
 		reportMediaSourcePlaceholderRect(state, rect) {
 			state.mediaSourcePlaceholderRect = rect
+		},
+		setInterpretationCaption(state, text) {
+			state.interpretationCaption = text || ''
 		},
 		setUserLocale(state, locale) {
 			state.userLocale = locale

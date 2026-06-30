@@ -2,6 +2,9 @@
 .c-room(v-if="room", :class="{'standalone-chat': modules['chat.native'] && room.modules.length === 1}")
 	.stage(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
 		media-source-placeholder
+		#stage-interpretation-captions(v-if="interpretationCaption")
+			.interpretation-caption-bar
+				span.caption-text {{ interpretationCaption }}
 		reactions-overlay(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
 		upcoming-stream-countdown(:room="room")
 		.stage-tool-blocker(v-if="activeStageTool !== null", @click="activeStageTool = null")
@@ -87,6 +90,9 @@ export default {
 		}
 	},
 	computed: {
+		interpretationCaption() {
+			return this.$store.state.interpretationCaption
+		},
 		unreadTabsClasses() {
 			return Object.entries(this.unreadTabs).filter(([tab, value]) => value).map(([tab]) => `tab-${tab}-unread`)
 		}
@@ -161,6 +167,28 @@ export default {
 		flex: auto
 		overflow: hidden
 		position: relative
+		#stage-interpretation-captions
+			flex: 0 0 auto
+			z-index: 5
+			&:empty
+				display: none
+			.interpretation-caption-bar
+				box-sizing: border-box
+				min-height: 56px
+				max-height: 30vh
+				display: flex
+				align-items: center
+				justify-content: center
+				overflow-y: auto
+				padding: 10px 24px
+				background-color: #000
+				border-top: 2px solid rgba(255, 255, 255, 0.15)
+				.caption-text
+					color: #fff
+					text-align: center
+					font-size: 20px
+					line-height: 1.4
+					font-weight: 500
 	.c-media-source-placeholder
 		flex: auto
 	.room-sidebar

@@ -1,7 +1,8 @@
 <template lang="pug">
-.c-livestream(:class="[`size-${size}`, {playing, buffering, seeking, automuted, muted, 'is-offline': offline, 'choosing-level': showLevelChooser, 'choosing-captions': showCaptionsChooser, 'choosing-source': showSourceChooser}]", v-resize-observer="onResize")
+.c-livestream(:class="[`size-${size}`, {playing, buffering, seeking, automuted, muted, 'is-offline': offline, 'choosing-level': showLevelChooser, 'choosing-captions': showCaptionsChooser, 'choosing-source': showSourceChooser, 'choosing-interpretation': showInterpretationChooser}]", v-resize-observer="onResize")
 	.video-container(ref="videocontainer")
 		video(ref="video", style="width:100%;height:100%", @playing="playingVideo", @pause="pausingVideo", @volumechange="onVolumechange")
+		audio(ref="ttsAudio", style="display:none")
 		.offline(v-if="offline")
 			img.offline-image(v-if="module.config.streamOfflineImage || theme.streamOfflineImage", :src="module.config.streamOfflineImage || theme.streamOfflineImage")
 			.offline-message(v-else) {{ $t('Livestream:offline-message:text') }}
@@ -24,6 +25,8 @@
 				bunt-icon-button(v-if="hasAlternativeStreams", @click="showSourceChooser = !showSourceChooser") movie
 				bunt-icon-button(v-if="!offline && textTracks.length > 0", @click="toggleCaptions") {{ textTracks.some(t => t.mode === 'showing') ? 'closed-caption' : 'closed-caption-outline' }}
 				bunt-icon-button(v-else-if="!offline && module.config.subtitle_url", @click="openExternalSubtitles") closed-caption-outline
+				bunt-icon-button(v-if="!offline && interpretationLanguages.length > 0", @click="showInterpretationChooser = !showInterpretationChooser", :class="{active: interpretationLang}") translate
+				bunt-icon-button(v-if="!offline && interpretationLanguages.length > 0", @click="toggleTts", :class="{active: ttsEnabled}") account-voice
 				bunt-icon-button(v-if="!offline", @click="showLevelChooser = !showLevelChooser") {{ levelIcon }}
 				bunt-icon-button(v-if="!offline", @click="toggleVolume") {{ muted || volume === 0 ? 'volume_off' : 'volume_high' }}
 				input.volume-slider(v-if="!offline", type="range", step="any", min="0", max="1", aria-label="Volume", :value="volume", @input="onVolumeSlider", :style="{'--volume': volume}")
@@ -34,6 +37,9 @@
 			.caption-chooser(v-if="showCaptionsChooser", @click.stop="")
 				.track(@click="chooseTextTrack(null)", :class="{chosen: !textTracks.some(t => t.mode === 'showing')}") {{ $t('Livestream:captions-off:text') }}
 				.track(v-for="track of textTracks", :class="{chosen: track.mode === 'showing'}", @click="chooseTextTrack(track)") {{ track.label }}
+			.interpretation-chooser(v-if="showInterpretationChooser", @click.stop="")
+				.lang(@click="chooseInterpretationLang(null)", :class="{chosen: !interpretationLang}") {{ $t('Livestream:captions-off:text') }}
+				.lang(v-for="lang of interpretationLanguages", :class="{chosen: lang === interpretationLang}", @click="chooseInterpretationLang(lang)") {{ lang }}
 			.level-chooser(v-if="showLevelChooser", @click.stop="")
 				.level(@click="chooseLevel(null)", :class="{chosen: !manualLevel}") Auto
 				.level(v-for="level of levels", :class="{chosen: level === manualLevel, auto: level === autoLevel}", @click="chooseLevel(level)") {{ level.height + 'p' }}
@@ -44,6 +50,7 @@
 // - backdrop controls with black for contrast on white
 // - add blocking backdrop on level chooser
 import { mapGetters, mapState } from 'vuex'
+import { markRaw } from 'vue'
 import Hls from 'hls.js'
 import mux from 'mux-embed'
 import config from 'config'
@@ -108,6 +115,17 @@ export default {
 			// Captions
 			textTracks: [],
 			showCaptionsChooser: false,
+			// Interpretation captions (SUSI)
+			interpretationLang: null,
+			showInterpretationChooser: false,
+			// Placeholder for upcoming SUSI text-to-speech; UI only for now.
+			ttsEnabled: false,
+			ttsStream: null,
+			ttsQueue: [],
+			ttsPlaying: false,
+			captionStream: null,
+			currentCaptionText: '',
+			captionClearTimer: null,
 			// Alternative sources
 			showSourceChooser: false,
 			chosenAlternative: null
@@ -116,6 +134,26 @@ export default {
 	computed: {
 		...mapState(['streamingRoom']),
 		...mapGetters(['autoplay']),
+		interpretationConfig() {
+			return this.module.config?.interpretation || null
+		},
+		interpretationLanguages() {
+			const cfg = this.interpretationConfig
+			return cfg && cfg.enabled && Array.isArray(cfg.languages) ? cfg.languages : []
+		},
+		ttsUrl() {
+			const cfg = this.interpretationConfig
+			console.log('[TTS] interpretationConfig:', cfg)
+			if (!cfg) return null
+			if (cfg.tts_url) return cfg.tts_url
+			if (cfg.url) return cfg.url
+			return null
+		},
+		captionBarVisible() {
+			// Show the dedicated caption bar (below the video) when a language is
+			// selected and we're not in the tiny preview variant.
+			return this.size !== 'tiny' && !!this.interpretationLang
+		},
 		seekable() {
 			return this.isLive === false || config.seekableLiveStreams
 		},
@@ -174,6 +212,17 @@ export default {
 			},
 			deep: true,
 			immediate: false
+		},
+		interpretationLanguages: {
+			// Room/module config can arrive after this component mounts (over the
+			// websocket), so start captions reactively once a language is available
+			// rather than only in mounted().
+			handler(langs) {
+				if (langs && langs.length > 0 && !this.interpretationLang && !this.captionStream) {
+					this.chooseInterpretationLang(langs[0])
+				}
+			},
+			immediate: true
 		}
 	},
 	created() {
@@ -197,6 +246,8 @@ export default {
 		this.initializePlayer()
 	},
 	beforeUnmount() {
+		this.stopCaptionStream()
+		this.stopTtsStream()
 		this.player?.destroy()
 		document.removeEventListener('fullscreenchange', this.onFullscreenchange)
 		this.$refs.video.textTracks.removeEventListener('addtrack', this.onTextTracksChanged)
@@ -361,6 +412,138 @@ export default {
 			this.onTextTracksChanged()
 			this.showCaptionsChooser = false
 		},
+		chooseInterpretationLang(lang) {
+			this.showInterpretationChooser = false
+			if (lang === this.interpretationLang) return
+			this.stopCaptionStream()
+			this.interpretationLang = lang
+			if (lang) {
+				this.startCaptionStream(lang)
+				// If TTS was active, reconnect it for the new language.
+				if (this.ttsEnabled) {
+					this.stopTtsStream()
+					this.startTtsStream()
+				}
+			}
+		},
+		toggleTts() {
+			console.log('[TTS] toggleTts called, ttsEnabled:', this.ttsEnabled, 'ttsUrl:', this.ttsUrl)
+			if (this.ttsEnabled) {
+				this.stopTtsStream()
+				this.ttsEnabled = false
+				this.$refs.video.muted = this.muted
+			} else {
+				if (!this.ttsUrl) {
+					console.warn('[TTS] No tts_url available — interpretationConfig:', this.interpretationConfig)
+					return
+				}
+				this.ttsEnabled = true
+				this.$refs.video.muted = true
+				this.startTtsStream()
+			}
+		},
+		startTtsStream() {
+			const lang = this.interpretationLang || (this.interpretationLanguages[0] || '')
+			const sep = this.ttsUrl.includes('?') ? '&' : '?'
+			const url = `${this.ttsUrl}${sep}tts=1&lang=${encodeURIComponent(lang)}`
+			const source = markRaw(new EventSource(url, { withCredentials: true }))
+			source.onmessage = (event) => {
+				let data
+				try { data = JSON.parse(event.data) } catch (e) { return }
+				if (!data || data.status === 'connected') return
+				if (data.audio_b64) {
+					this.ttsQueue.push(data.audio_b64)
+					if (!this.ttsPlaying) this.playNextTtsChunk()
+				}
+			}
+			this.ttsStream = source
+		},
+		playNextTtsChunk() {
+			if (!this.ttsQueue.length) {
+				this.ttsPlaying = false
+				return
+			}
+			this.ttsPlaying = true
+			const b64 = this.ttsQueue.shift()
+			// Decode base64 WAV and hand to the hidden <audio> element.
+			const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+			const blob = new Blob([bytes], { type: 'audio/wav' })
+			const url = URL.createObjectURL(blob)
+			const audio = this.$refs.ttsAudio
+			audio.src = url
+			audio.onended = () => {
+				URL.revokeObjectURL(url)
+				this.playNextTtsChunk()
+			}
+			audio.onerror = () => {
+				URL.revokeObjectURL(url)
+				this.playNextTtsChunk()
+			}
+			audio.play().catch(() => { this.playNextTtsChunk() })
+		},
+		stopTtsStream() {
+			if (this.ttsStream) {
+				this.ttsStream.close()
+				this.ttsStream = null
+			}
+			const audio = this.$refs.ttsAudio
+			if (audio) {
+				audio.pause()
+				audio.src = ''
+			}
+			this.ttsQueue = []
+			this.ttsPlaying = false
+		},
+		startCaptionStream(lang) {
+			const cfg = this.interpretationConfig
+			if (!cfg || !cfg.url) return
+			const sep = cfg.url.includes('?') ? '&' : '?'
+			const url = `${cfg.url}${sep}lang=${encodeURIComponent(lang)}`
+			// withCredentials so the same-origin session cookie is sent; the SUSI
+			// token is injected server-side by the relay, never exposed here.
+			const source = new EventSource(url, { withCredentials: true })
+			source.onmessage = (event) => {
+				let data
+				try {
+					data = JSON.parse(event.data)
+				} catch (e) {
+					return
+				}
+				if (!data || data.status === 'connected') return
+				this.addCaptionCue(data)
+			}
+			source.onerror = () => {
+				// EventSource auto-reconnects; nothing to do for transient errors.
+			}
+			this.captionStream = markRaw(source)
+		},
+		addCaptionCue(data) {
+			const text = data.translation || data.transcript || ''
+			if (!text) return
+			// Render into a DOM overlay rather than native VTTCue text tracks,
+			// which do not reliably display over a live MSE/hls.js stream.
+			this.currentCaptionText = text
+			this.$store.commit('setInterpretationCaption', text)
+			if (this.captionClearTimer) clearTimeout(this.captionClearTimer)
+			// Keep the last line visible until the next arrives; clear only if the
+			// stream goes quiet for a while so a stale line doesn't linger forever.
+			this.captionClearTimer = setTimeout(() => {
+				this.currentCaptionText = ''
+				this.$store.commit('setInterpretationCaption', '')
+			}, 15000)
+		},
+		stopCaptionStream() {
+			if (this.captionStream) {
+				this.captionStream.close()
+				this.captionStream = null
+			}
+			if (this.captionClearTimer) {
+				clearTimeout(this.captionClearTimer)
+				this.captionClearTimer = null
+			}
+			this.currentCaptionText = ''
+			this.$store.commit('setInterpretationCaption', '')
+		},
 		toggleVolume() {
 			this.automuted = false
 			this.$refs.video.muted = !this.muted
@@ -504,6 +687,7 @@ export default {
 		flex: auto
 		min-height: 0
 		height: 100%	/* required by Safari */
+		position: relative	/* scope .controls overlay to the video box only */
 	.controls
 		position: absolute
 		top: 0
@@ -661,7 +845,7 @@ export default {
 					thumb()
 				&::-moz-range-thumb
 					thumb()
-		.level-chooser, .caption-chooser, .source-chooser
+		.level-chooser, .caption-chooser, .source-chooser, .interpretation-chooser
 			position: absolute
 			bottom: 52px
 			right: 200px
@@ -671,13 +855,15 @@ export default {
 			background-color: $clr-secondary-text-light
 			&.caption-chooser
 				right: 242px
+			&.interpretation-chooser
+				right: 284px
 			&.source-chooser
 				right: 242px
 				text-align: right
 				width: auto
 				.source
 					padding-left: 32px
-			.level, .track, .source
+			.level, .track, .source, .lang
 				position: relative
 				cursor: pointer
 				flex: none
@@ -702,7 +888,7 @@ export default {
 					background-color: rgba(255,255,255,.2)
 	.shaka-controls-button-panel > .material-icons
 		font-size: 24px
-	&:hover, &:not(.playing), &.buffering, &.seeking, &.automuted, &.muted, &.choosing-level, &.choosing-captions, &.choosing-source
+	&:hover, &:not(.playing), &.buffering, &.seeking, &.automuted, &.muted, &.choosing-level, &.choosing-captions, &.choosing-source, &.choosing-interpretation
 		.controls, .mdi
 			opacity: 1
 	&.is-offline .controls .source-chooser
