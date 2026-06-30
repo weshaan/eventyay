@@ -338,6 +338,21 @@ creation, ``copy_from`` can be a subevent that is being copied from.
 As with all plugin signals, the ``sender`` keyword argument will contain the event.
 """
 
+video_admin_event_forms = EventPluginSignal()
+"""
+Arguments: ``request``
+
+This signal allows plugins to return additional forms rendered on the video admin
+event update page (``/admin/video/events/<pk>/``). Receivers get ``request`` and
+should return a bound form instance, or a list of them. Forms may define
+optional class attributes ``title`` (section heading) and ``template`` (partial
+to render the form; receives ``form`` in the template context). Forms may also
+define ``test_action_post_key`` and ``run_test_action(request)`` for extra
+submit buttons handled before ``save()``.
+
+As with all plugin signals, the ``sender`` keyword argument will contain the event.
+"""
+
 oauth_application_registered = Signal()
 """
 Arguments: ``user``, ``application``

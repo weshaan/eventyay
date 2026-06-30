@@ -75,6 +75,12 @@
                 {% trans "Go to" %}
                 <a href="{% url 'eventyay_common:event.create_access_to_video' organizer=request.event.organizer.slug event=request.event.slug %}" target="_blank" rel="noopener noreferrer">{% trans "Video Configuration" %}</a>
             </p>
+            {% if "interpretation" in request.event.plugins %}
+            <p>
+                {% trans "Go to" %}
+                <a href="{% url 'plugins:interpretation:dashboard' organizer=request.organizer.slug event=request.event.slug %}">{% trans "Interpretation Dashboard" %}</a>
+            </p>
+            {% endif %}
         </div>
     </div>
     {% endif %}
