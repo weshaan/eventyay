@@ -24,6 +24,7 @@ from qrcode.image.svg import SvgPathFillImage
 
 from eventyay.agenda.signals import register_recording_provider
 from eventyay.agenda.tasks import export_schedule_html
+from eventyay.base.models.event import default_feature_flags
 from eventyay.common.text.phrases import phrases
 from eventyay.common.urls import EventUrls
 from eventyay.schedule.notifications import render_notifications
@@ -824,9 +825,14 @@ class Schedule(PretalxModel):
             )
         talks = talks.order_by('start')
 
-        popularity_enabled = bool(self.event.feature_flags.get('session_popularity_enabled', False))
-        show_popularity_calendar = bool(self.event.feature_flags.get('session_popularity_show_on_calendar', True))
-        show_popularity_list = bool(self.event.feature_flags.get('session_popularity_show_on_list', True))
+        flags = (
+            self.event.feature_flags
+            if isinstance(self.event.feature_flags, dict)
+            else default_feature_flags()
+        )
+        popularity_enabled = bool(flags.get('session_popularity_enabled', False))
+        show_popularity_calendar = bool(flags.get('session_popularity_show_on_calendar', True))
+        show_popularity_list = bool(flags.get('session_popularity_show_on_list', True))
         show_content_locale = not respect_public_visibility or self.event.cfp.public_content_locale
 
         talk_list = list(talks)
