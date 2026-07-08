@@ -1,22 +1,26 @@
 <template lang="pug">
-.c-interpretation-bar(v-if="visible")
-	.caption-text(:class="{'is-placeholder': !captionText}") {{ captionText || $t('InterpretationBar:placeholder:text') }}
-	.bar-controls
-		.lang-control
-			bunt-icon-button.lang-icon(aria-hidden="true", tabindex="-1") translate
-			select.lang-select(
-				:aria-label="$t('InterpretationBar:subtitles-label:text')",
-				:value="interpretationLang || ''",
-				@change="onLangSelect"
-			)
-				option(value="") {{ $t('InterpretationBar:subtitles-off:text') }}
-				option(v-for="lang of languages", :key="lang", :value="lang") {{ lang }}
-		bunt-icon-button.tts-btn(
-			@click="toggleTts",
-			:class="{active: ttsEnabled}",
-			:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
-			:disabled="!interpretationLang"
-		) account-voice
+.c-interpretation-stage(v-if="visible")
+	.c-interpretation-captions
+		.caption-text(:class="{'is-placeholder': !captionText}") {{ captionText || $t('InterpretationBar:placeholder:text') }}
+	.c-interpretation-toolbar
+		.toolbar-controls
+			.lang-control
+				bunt-icon-button.lang-icon(aria-hidden="true", tabindex="-1") translate
+				select.lang-select(
+					:aria-label="$t('InterpretationBar:subtitles-label:text')",
+					:value="interpretationLang || ''",
+					@change="onLangSelect"
+				)
+					option(value="") {{ $t('InterpretationBar:subtitles-off:text') }}
+					option(v-for="lang of languages", :key="lang", :value="lang") {{ lang }}
+			bunt-icon-button.tts-btn(
+				@click="toggleTts",
+				:class="{active: ttsEnabled}",
+				:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
+				:disabled="!interpretationLang"
+			) account-voice
+		.toolbar-trailing
+			slot(name="trailing")
 	audio(ref="ttsAudio", style="display:none")
 </template>
 <script>
@@ -210,21 +214,26 @@ export default {
 }
 </script>
 <style lang="stylus" scoped>
-.c-interpretation-bar
+.c-interpretation-stage
+	flex: none
+	display: flex
+	flex-direction: column
+	width: 100%
+	min-width: 0
+
+.c-interpretation-captions
 	box-sizing: border-box
 	display: flex
 	align-items: center
-	gap: 12px
-	flex: 1 1 auto
-	min-width: 0
-	height: 100%
-	padding: 0 16px
+	width: 100%
+	min-height: 48px
+	padding: 10px 16px
 	background-color: #0a0a0a
 
 .caption-text
-	flex: 1
+	width: 100%
 	min-width: 0
-	text-align: left
+	text-align: center
 	color: #fff
 	font-size: 16px
 	line-height: 1.35
@@ -237,11 +246,31 @@ export default {
 		font-weight: 400
 		font-style: italic
 
-.bar-controls
+.c-interpretation-toolbar
+	box-sizing: border-box
+	display: flex
+	align-items: center
+	justify-content: space-between
+	gap: 12px
+	width: 100%
+	min-height: 56px
+	padding: 0 12px
+	background-color: $clr-white
+	border-top: border-separator()
+
+.toolbar-controls
 	display: flex
 	align-items: center
 	gap: 4px
-	flex-shrink: 0
+	flex: none
+
+.toolbar-trailing
+	display: flex
+	align-items: center
+	justify-content: flex-end
+	gap: 8px
+	flex: none
+	margin-left: auto
 
 .lang-control
 	display: flex
@@ -249,11 +278,11 @@ export default {
 	gap: 2px
 	padding: 2px 4px 2px 0
 	border-radius: 6px
-	background: rgba(255, 255, 255, 0.06)
+	background: rgba(0, 0, 0, 0.04)
 
 .lang-icon
 	pointer-events: none
-	color: rgba(255, 255, 255, 0.85)
+	color: rgba(0, 0, 0, 0.7)
 	width: 36px
 	height: 36px
 	:deep(.bunt-icon)
@@ -263,32 +292,32 @@ export default {
 	appearance: none
 	border: none
 	background: transparent
-	color: #fff
+	color: $clr-primary-text
 	font-size: 14px
 	font-weight: 500
 	padding: 8px 28px 8px 4px
 	cursor: pointer
 	min-width: 88px
-	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23ffffff' fill-opacity='0.7' d='M1.41 0L6 4.58 10.59 0 12 1.41l-6 6-6-6z'/%3E%3C/svg%3E")
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23333333' fill-opacity='0.7' d='M1.41 0L6 4.58 10.59 0 12 1.41l-6 6-6-6z'/%3E%3C/svg%3E")
 	background-repeat: no-repeat
 	background-position: right 8px center
 	&:focus
-		outline: 2px solid rgba(255, 255, 255, 0.35)
+		outline: 2px solid var(--clr-primary, $clr-primary)
 		outline-offset: 2px
 	option
 		color: #111
 		background: #fff
 
 .tts-btn
-	color: rgba(255, 255, 255, 0.85)
+	color: rgba(0, 0, 0, 0.7)
 	width: 40px
 	height: 40px
 	border-radius: 6px
 	:deep(.bunt-icon)
 		font-size: 24px
 	&.active
-		color: #fff
-		background: rgba(255, 255, 255, 0.14)
+		color: var(--clr-primary, $clr-primary)
+		background: rgba(0, 0, 0, 0.06)
 	&:disabled
 		opacity: 0.35
 		pointer-events: none

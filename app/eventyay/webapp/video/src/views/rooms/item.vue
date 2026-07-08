@@ -6,11 +6,13 @@
 		reactions-overlay(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
 		upcoming-stream-countdown(:room="room")
 		.stage-tool-blocker(v-if="activeStageTool !== null", @click="activeStageTool = null")
-		.stage-tools(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']", :class="{'stage-tools--has-captions': interpretationCaptionsActive}")
-			.stage-tools-start
-				interpretation-caption-bar(v-if="streamModule", :module="streamModule")
+		interpretation-caption-bar(v-if="interpretationCaptionsActive && streamModule", :module="streamModule")
+			template(#trailing)
 				reactions-bar(:expanded="true", @expand="activeStageTool = 'reaction'")
 				AudioTranslationDropdown(v-if="languages.length > 1", :languages="languages", @languageChanged="handleLanguageChange")
+		.stage-tools(v-else-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
+			reactions-bar(:expanded="true", @expand="activeStageTool = 'reaction'")
+			AudioTranslationDropdown(v-if="languages.length > 1", :languages="languages", @languageChanged="handleLanguageChange")
 	media-source-placeholder(v-else-if="modules['call.bigbluebutton'] || modules['call.zoom']")
 	roulette(v-else-if="modules['networking.roulette'] && $features.enabled('roulette')", :module="modules['networking.roulette']", :room="room")
 	landing-page(v-else-if="modules['page.landing']", :module="modules['page.landing']")
@@ -212,39 +214,45 @@ export default {
 	.stage-tools
 		flex: none
 		display: flex
-		justify-content: flex-start
-		align-items: stretch
+		align-items: center
+		justify-content: flex-end
 		width: 100%
 		height: 56px
 		user-select: none
 		overflow: hidden
 		background-color: $clr-white
-		padding: 0
-		.stage-tools-start
-			display: flex
-			align-items: center
-			gap: 8px
-			width: 100%
-			min-width: 0
-			.c-interpretation-bar
-				flex: 1 1 auto
-				min-width: 0
-			.c-reactions-bar
-				flex: none
+		padding: 0 12px
+		.c-reactions-bar
+			flex: none
+			position: relative
+			right: auto
+			left: auto
+			margin: 8px 0 0
+			padding: 4px 0
+			height: 56px
+			.actions
 				position: relative
-				right: auto
+				bottom: auto
 				left: auto
-				margin: 0 12px 0 4px
-				padding: 4px 0
-				height: 56px
-				align-self: center
-				.actions
-					position: relative
-					bottom: auto
-					left: auto
-					transform: none
-				&.expanded .actions
-					transform: none
+				transform: none
+			&.expanded .actions
+				transform: none
+	.c-interpretation-stage .toolbar-trailing
+		.c-reactions-bar
+			flex: none
+			position: relative
+			right: auto
+			left: auto
+			margin: 8px 0 0
+			padding: 4px 0
+			height: 56px
+			.actions
+				position: relative
+				bottom: auto
+				left: auto
+				transform: none
+			&.expanded .actions
+				transform: none
 		.stage-tool
 			font-size: 16px
 			color: $clr-secondary-text-light

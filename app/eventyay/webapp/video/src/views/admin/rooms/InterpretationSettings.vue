@@ -68,7 +68,8 @@ const TRANSLATION_PROVIDER_OPTIONS = [
 function languageLabel(code) {
 	const english = ISO6391.getName(code) || code
 	const native = ISO6391.getNativeName(code) || english
-	return native === english ? english : `${english} - ${native}`
+	const names = native === english ? english : `${english} - ${native}`
+	return `${names} (${code})`
 }
 
 function buildLanguageOptions() {
