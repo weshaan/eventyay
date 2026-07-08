@@ -227,7 +227,7 @@ export default {
 			position: relative
 			right: auto
 			left: auto
-			margin: 8px 0 0
+			margin: 8px 40px 0 0
 			padding: 4px 0
 			height: 56px
 			.actions
@@ -243,9 +243,9 @@ export default {
 			position: relative
 			right: auto
 			left: auto
-			margin: 8px 0 0
-			padding: 4px 0
-			height: 56px
+			margin: 0
+			padding: 0
+			height: auto
 			.actions
 				position: relative
 				bottom: auto

@@ -253,7 +253,7 @@ export default {
 	justify-content: space-between
 	gap: 12px
 	width: 100%
-	min-height: 56px
+	height: 48px
 	padding: 0 12px
 	background-color: $clr-white
 	border-top: border-separator()
@@ -283,10 +283,10 @@ export default {
 .lang-icon
 	pointer-events: none
 	color: rgba(0, 0, 0, 0.7)
-	width: 36px
-	height: 36px
+	width: 32px
+	height: 32px
 	:deep(.bunt-icon)
-		font-size: 22px
+		font-size: 20px
 
 .lang-select
 	appearance: none
@@ -295,7 +295,7 @@ export default {
 	color: $clr-primary-text
 	font-size: 14px
 	font-weight: 500
-	padding: 8px 28px 8px 4px
+	padding: 4px 28px 4px 4px
 	cursor: pointer
 	min-width: 88px
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23333333' fill-opacity='0.7' d='M1.41 0L6 4.58 10.59 0 12 1.41l-6 6-6-6z'/%3E%3C/svg%3E")
@@ -310,11 +310,11 @@ export default {
 
 .tts-btn
 	color: rgba(0, 0, 0, 0.7)
-	width: 40px
-	height: 40px
+	width: 36px
+	height: 36px
 	border-radius: 6px
 	:deep(.bunt-icon)
-		font-size: 24px
+		font-size: 22px
 	&.active
 		color: var(--clr-primary, $clr-primary)
 		background: rgba(0, 0, 0, 0.06)
