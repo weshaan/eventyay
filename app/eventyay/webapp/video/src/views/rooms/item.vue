@@ -6,7 +6,11 @@
 		reactions-overlay(v-if="modules['livestream.native'] || modules['livestream.youtube'] || modules['livestream.iframe'] || modules['call.janus']")
 		upcoming-stream-countdown(:room="room")
 		.stage-tool-blocker(v-if="activeStageTool !== null", @click="activeStageTool = null")
-		interpretation-caption-bar(v-if="interpretationCaptionsActive && streamModule", :module="streamModule")
+		interpretation-caption-bar(
+			v-if="interpretationCaptionsActive && streamModule",
+			:module="streamModule",
+			:room-id="room.id"
+		)
 			template(#trailing)
 				reactions-bar(:expanded="true", @expand="activeStageTool = 'reaction'")
 				AudioTranslationDropdown(v-if="languages.length > 1", :languages="languages", @languageChanged="handleLanguageChange")

@@ -17,7 +17,7 @@
 			:disabled="roomToggleLoading"
 		)
 		template(v-if="roomEnabled")
-			p.hint Choose transcription and translation providers and caption languages, then save the room and start a session when you go live.
+			p.hint Choose transcription and translation providers and caption languages, then save the room. On stage, use the caption menu: Off stops the session, any language starts it.
 			bunt-select(
 				name="transcription_provider",
 				v-model="form.transcription_provider",
@@ -43,14 +43,7 @@
 					.caption-language-action
 						bunt-icon-button.remove-caption-language(@click="removeCaptionLanguage(index)", aria-label="Remove caption language") delete-outline
 				bunt-button.add-language-btn(@click="addCaptionLanguage") + Add caption language
-			.session-row
-				span.status-label Session:
-				span.status-badge(:class="statusClass") {{ statusLabel }}
-				bunt-button.session-btn(v-if="sessionStatus === 'running'", @click="stopSession", :loading="sessionLoading") Stop session
-				bunt-button.session-btn(v-else, @click="startSession", :loading="sessionLoading", :disabled="!canStartSession") Start session
-			p.session-notice(v-if="form && !form.interpretation_ready") Enable live interpretation on the interpretation dashboard before starting a session.
-			p.session-notice(v-else-if="form && !effectiveStreamUrl") Add a stream URL in the Stream section above and save the room before starting a session.
-			p.session-error(v-if="sessionError") {{ sessionError }}
+			p.action-error(v-if="actionError") {{ actionError }}
 </template>
 <script>
 import api from 'lib/api'
@@ -59,11 +52,6 @@ import {
 	languageLabel,
 	normalizeCaptionLanguageCodes,
 } from 'lib/interpretation-languages'
-
-const STATUS_LABELS = {
-	running: 'Running',
-	idle: 'Idle',
-}
 
 const PROVIDER_DEFAULT = { id: '', label: 'Default' }
 const TRANSCRIPTION_PROVIDER_OPTIONS = [
@@ -87,21 +75,6 @@ function withCurrentOption(options, value) {
 		return options
 	}
 	return [...options, { id: value, label: languageLabel(value) }]
-}
-
-function streamUrlFromModules(modules) {
-	if (!modules) return ''
-	const hlsUrl = modules['livestream.native']?.config?.hls_url
-	if (hlsUrl?.trim()) return hlsUrl.trim()
-	const ytid = modules['livestream.youtube']?.config?.ytid
-	if (ytid?.trim()) {
-		const value = ytid.trim()
-		if (value.includes('://')) return value
-		return `https://www.youtube.com/watch?v=${value}`
-	}
-	const iframeUrl = modules['livestream.iframe']?.config?.url
-	if (iframeUrl?.trim()) return iframeUrl.trim()
-	return ''
 }
 
 function apiErrorDetail(data) {
@@ -139,8 +112,7 @@ export default {
 			languageOptions: buildLanguageOptions(),
 			transcriptionProviderOptions: TRANSCRIPTION_PROVIDER_OPTIONS,
 			translationProviderOptions: TRANSLATION_PROVIDER_OPTIONS,
-			sessionLoading: false,
-			sessionError: null,
+			actionError: null,
 			dashboardUrl: '',
 			roomToggleLoading: false,
 		}
@@ -158,26 +130,6 @@ export default {
 				message: 'Interpretation plugin is active. Please choose an interpreter on the interpretation dashboard.',
 			}
 		},
-		effectiveStreamUrl() {
-			return (
-				streamUrlFromModules(this.modules)
-				|| this.form?.detected_stream_url
-				|| this.form?.stream_url
-				|| ''
-			)
-		},
-		canStartSession() {
-			return !!(this.form?.room_enabled && this.form?.interpretation_ready && this.effectiveStreamUrl)
-		},
-		sessionStatus() {
-			return this.form?.status === 'running' ? 'running' : 'idle'
-		},
-		statusLabel() {
-			return STATUS_LABELS[this.sessionStatus]
-		},
-		statusClass() {
-			return `is-${this.sessionStatus}`
-		},
 	},
 	async created() {
 		await this.loadConfig()
@@ -186,7 +138,7 @@ export default {
 		async setRoomEnabled(value) {
 			if (!this.form || this.roomToggleLoading) return
 			this.roomToggleLoading = true
-			this.sessionError = null
+			this.actionError = null
 			try {
 				const response = await fetch(this.apiUrl('config/'), {
 					method: 'PATCH',
@@ -200,7 +152,7 @@ export default {
 				}
 				this.applyConfig(data)
 			} catch (err) {
-				this.sessionError = err.message || 'Could not update interpretation'
+				this.actionError = err.message || 'Could not update interpretation'
 			} finally {
 				this.roomToggleLoading = false
 			}
@@ -344,49 +296,6 @@ export default {
 				return false
 			}
 		},
-		async startSession() {
-			this.sessionError = null
-			this.sessionLoading = true
-			try {
-				await this.save({ quiet: true })
-				const response = await fetch(this.apiUrl('start/'), {
-					method: 'POST',
-					headers: this.authHeaders(true),
-					credentials: 'include',
-					body: JSON.stringify({ stream_url: this.effectiveStreamUrl }),
-				})
-				const data = await response.json().catch(() => ({}))
-				if (!response.ok) {
-					throw new Error(apiErrorDetail(data) || 'Could not start session')
-				}
-				this.applyConfig(data)
-			} catch (err) {
-				this.sessionError = err.message || 'Could not start session'
-			} finally {
-				this.sessionLoading = false
-			}
-		},
-		async stopSession() {
-			this.sessionError = null
-			this.sessionLoading = true
-			try {
-				const response = await fetch(this.apiUrl('stop/'), {
-					method: 'POST',
-					headers: this.authHeaders(true),
-					credentials: 'include',
-					body: '{}',
-				})
-				const data = await response.json().catch(() => ({}))
-				if (!response.ok) {
-					throw new Error(apiErrorDetail(data) || 'Could not stop session')
-				}
-				this.applyConfig(data)
-			} catch (err) {
-				this.sessionError = err.message || 'Could not stop session'
-			} finally {
-				this.sessionLoading = false
-			}
-		},
 	},
 }
 </script>
@@ -435,25 +344,8 @@ export default {
 				icon-button-style(style: clear)
 	.add-language-btn
 		margin-top: 4px
-	.session-row
-		display: flex
-		align-items: center
-		flex-wrap: wrap
-		gap: 8px
-		margin: 24px 0 8px 0
-	.session-notice, .session-error
+	.action-error
 		font-size: 13px
 		margin: 0 0 12px 0
-	.session-notice
-		color: #666
-	.session-error
 		color: #c62828
-	.status-badge
-		font-size: 12px
-		padding: 2px 8px
-		border-radius: 4px
-		background: #eee
-		&.is-running
-			background: #e8f5e9
-			color: #2e7d32
 </style>

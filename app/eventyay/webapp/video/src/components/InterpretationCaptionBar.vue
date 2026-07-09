@@ -1,14 +1,15 @@
 <template lang="pug">
 .c-interpretation-stage(v-if="visible")
 	.c-interpretation-captions
-		.caption-text(:class="{'is-placeholder': !captionText}") {{ captionText || $t('InterpretationBar:placeholder:text') }}
+		.caption-text(:class="captionTextClass") {{ captionDisplayText }}
 	.c-interpretation-toolbar
 		.toolbar-controls
 			.lang-control
-				bunt-icon-button.lang-icon(aria-hidden="true", tabindex="-1") translate
+				bunt-icon-button.lang-icon(aria-hidden="true", tabindex="-1") closed-caption-outline
 				select.lang-select(
 					:aria-label="$t('InterpretationBar:subtitles-label:text')",
 					:value="interpretationLang || ''",
+					:disabled="sessionLoading",
 					@change="onLangSelect"
 				)
 					option(value="") {{ $t('InterpretationBar:subtitles-off:text') }}
@@ -17,7 +18,7 @@
 				@click="toggleTts",
 				:class="{active: ttsEnabled}",
 				:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
-				:disabled="!interpretationLang"
+				:disabled="!interpretationLang || sessionLoading"
 			) account-voice
 		.toolbar-trailing
 			slot(name="trailing")
@@ -26,6 +27,14 @@
 <script>
 import { markRaw } from 'vue'
 import { languageOptionsFromCodes } from 'lib/interpretation-languages'
+import {
+	applyRunningInterpretation,
+	applyStoppedInterpretation,
+	buildCaptionsUrl,
+	startInterpretationSession,
+	stopInterpretationSession,
+	streamUrlFromStreamModule,
+} from 'lib/interpretation-api'
 
 const CAPTION_CLEAR_MS = 15000
 
@@ -35,7 +44,11 @@ export default {
 		module: {
 			type: Object,
 			required: true
-		}
+		},
+		roomId: {
+			type: [String, Number],
+			required: true,
+		},
 	},
 	data() {
 		return {
@@ -46,7 +59,9 @@ export default {
 			ttsEnabled: false,
 			ttsStream: null,
 			ttsQueue: [],
-			ttsPlaying: false
+			ttsPlaying: false,
+			sessionLoading: false,
+			sessionError: null,
 		}
 	},
 	computed: {
@@ -63,24 +78,32 @@ export default {
 			return Array.isArray(this.config?.languages) ? this.config.languages : []
 		},
 		languageOptions() {
-			return languageOptionsFromCodes(this.languages)
+			return languageOptionsFromCodes(this.languages, { includeCode: false })
 		},
 		captionUrl() {
 			return this.config?.url || null
 		},
 		ttsUrl() {
 			return this.config?.tts_url || this.config?.url || null
-		}
+		},
+		captionTextClass() {
+			return {
+				'is-placeholder': !this.captionText && !this.sessionError && !this.sessionLoading,
+				'is-error': !!this.sessionError,
+			}
+		},
+		captionDisplayText() {
+			if (this.sessionError) return this.sessionError
+			if (this.sessionLoading) return this.$t('InterpretationBar:session-starting:text')
+			return this.captionText || this.$t('InterpretationBar:placeholder:text')
+		},
 	},
 	watch: {
 		languages: {
 			handler(langs) {
 				const codes = Array.isArray(langs) ? langs : []
 				if (this.interpretationLang && !codes.includes(this.interpretationLang)) {
-					this.setLanguage(null)
-				}
-				if (codes.length && !this.interpretationLang && !this.captionStream && this.liveCaptions) {
-					this.setLanguage(codes[0])
+					this.applyLanguageSelection(null, { localOnly: true })
 				}
 			},
 			immediate: true
@@ -89,15 +112,16 @@ export default {
 			if (!isLive) {
 				this.stopCaptionStream()
 				if (this.ttsEnabled) this.toggleTts()
-			} else if (this.interpretationLang) {
+				if (!this.sessionLoading) {
+					this.interpretationLang = null
+				}
+			} else if (this.interpretationLang && !this.captionStream) {
 				this.startCaptionStream(this.interpretationLang)
-			} else if (this.languages?.length) {
-				this.setLanguage(this.languages[0])
 			}
 		},
 		visible(isVisible) {
 			if (!isVisible) this.teardown()
-		}
+		},
 	},
 	beforeUnmount() {
 		this.teardown()
@@ -107,11 +131,61 @@ export default {
 			const lang = event.target.value || null
 			this.setLanguage(lang)
 		},
-		setLanguage(lang) {
-			if (lang === this.interpretationLang) return
+		async setLanguage(lang) {
+			const normalizedLang = lang || null
+			if (normalizedLang === this.interpretationLang && !this.sessionLoading) {
+				if (!normalizedLang && this.liveCaptions) {
+					// Off while session still running — stop below.
+				} else {
+					return
+				}
+			}
+
+			this.sessionError = null
+			this.sessionLoading = true
+			try {
+				if (!normalizedLang) {
+					if (this.liveCaptions) {
+						try {
+							await stopInterpretationSession(this.$store, this.roomId)
+						} catch (err) {
+							if (!String(err.message || '').toLowerCase().includes('no running')) {
+								throw err
+							}
+						}
+					}
+					applyStoppedInterpretation(this.module)
+					this.applyLanguageSelection(null, { localOnly: true })
+					return
+				}
+
+				if (!this.liveCaptions) {
+					const streamUrl = streamUrlFromStreamModule(this.module)
+					if (!streamUrl) {
+						throw new Error('Add a stream URL in room settings and save the room first.')
+					}
+					const data = await startInterpretationSession(this.$store, this.roomId, streamUrl)
+					applyRunningInterpretation(this.module, {
+						languages: data.target_languages || this.languages,
+						captionsUrl: buildCaptionsUrl(this.$store, this.roomId),
+					})
+				}
+				this.applyLanguageSelection(normalizedLang, { localOnly: true })
+			} catch (err) {
+				this.sessionError = err.message || 'Could not update caption session'
+			} finally {
+				this.sessionLoading = false
+			}
+		},
+		applyLanguageSelection(lang, { localOnly = false } = {}) {
+			if (lang === this.interpretationLang && localOnly) {
+				if (lang && this.liveCaptions) this.startCaptionStream(lang)
+				return
+			}
 			this.stopCaptionStream()
 			this.interpretationLang = lang
 			this.captionText = ''
+			this.sessionError = null
 			if (lang && this.liveCaptions) {
 				this.startCaptionStream(lang)
 				if (this.ttsEnabled) {
@@ -134,6 +208,7 @@ export default {
 		},
 		startCaptionStream(lang) {
 			if (!this.captionUrl) return
+			this.stopCaptionStream()
 			const sep = this.captionUrl.includes('?') ? '&' : '?'
 			const url = `${this.captionUrl}${sep}lang=${encodeURIComponent(lang)}`
 			const source = markRaw(new EventSource(url, { withCredentials: true }))
@@ -152,6 +227,7 @@ export default {
 		},
 		applyCaption(text) {
 			if (!text) return
+			this.sessionError = null
 			this.captionText = text
 			if (this.captionClearTimer) clearTimeout(this.captionClearTimer)
 			this.captionClearTimer = setTimeout(() => {
@@ -230,6 +306,7 @@ export default {
 			this.stopTtsStream()
 			this.ttsEnabled = false
 			this.interpretationLang = null
+			this.sessionError = null
 		}
 	}
 }
@@ -266,6 +343,11 @@ export default {
 		color: rgba(255, 255, 255, 0.42)
 		font-weight: 400
 		font-style: italic
+	&.is-error
+		color: #ff8a80
+		font-weight: 400
+		font-style: normal
+		white-space: normal
 
 .c-interpretation-toolbar
 	box-sizing: border-box
@@ -322,6 +404,9 @@ export default {
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23333333' fill-opacity='0.7' d='M1.41 0L6 4.58 10.59 0 12 1.41l-6 6-6-6z'/%3E%3C/svg%3E")
 	background-repeat: no-repeat
 	background-position: right 8px center
+	&:disabled
+		opacity: 0.6
+		cursor: wait
 	&:focus
 		outline: 2px solid var(--clr-primary, $clr-primary)
 		outline-offset: 2px

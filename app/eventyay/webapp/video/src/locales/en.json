@@ -175,6 +175,7 @@
 	"Livestream:default-source:text": "Default",
 	"Livestream:offline-message:text": "Stream offline",
 	"InterpretationBar:placeholder:text": "Subtitles will appear here",
+	"InterpretationBar:session-starting:text": "Starting captions…",
 	"InterpretationBar:subtitles-label:text": "Subtitle language",
 	"InterpretationBar:subtitles-off:text": "Off",
 	"InterpretationBar:tts-enable:text": "Enable spoken translation",

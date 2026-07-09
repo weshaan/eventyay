@@ -1,12 +1,12 @@
 import ISO6391 from 'iso-639-1'
 
-export function languageLabel(code) {
+export function languageLabel(code, { includeCode = true } = {}) {
 	const normalized = (code || '').trim()
 	if (!normalized) return ''
 	const english = ISO6391.getName(normalized) || normalized
 	const native = ISO6391.getNativeName(normalized) || english
 	const names = native === english ? english : `${english} - ${native}`
-	return `${names} (${normalized})`
+	return includeCode ? `${names} (${normalized})` : names
 }
 
 export function normalizeCaptionLanguageCodes(codes) {
@@ -22,9 +22,9 @@ export function normalizeCaptionLanguageCodes(codes) {
 	return result
 }
 
-export function languageOptionsFromCodes(codes) {
+export function languageOptionsFromCodes(codes, { includeCode = true } = {}) {
 	return normalizeCaptionLanguageCodes(codes).map((code) => ({
 		id: code,
-		label: languageLabel(code),
+		label: languageLabel(code, { includeCode }),
 	}))
 }
