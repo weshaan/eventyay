@@ -1,8 +1,9 @@
 <template lang="pug">
 .c-interpretation-stage(v-if="visible")
-	.c-interpretation-captions
+	.c-interpretation-captions(v-if="showCaptionsPanel")
 		.caption-text(:class="captionTextClass") {{ captionDisplayText }}
 	.c-interpretation-toolbar
+		.toolbar-error(v-if="sessionError && !showCaptionsPanel") {{ sessionError }}
 		.toolbar-controls
 			.lang-control
 				bunt-icon-button.lang-icon(aria-hidden="true", tabindex="-1") closed-caption-outline
@@ -96,6 +97,9 @@ export default {
 			if (this.sessionError) return this.sessionError
 			if (this.sessionLoading) return this.$t('InterpretationBar:session-starting:text')
 			return this.captionText || this.$t('InterpretationBar:placeholder:text')
+		},
+		showCaptionsPanel() {
+			return !!(this.interpretationLang || this.sessionLoading)
 		},
 	},
 	watch: {
@@ -360,6 +364,16 @@ export default {
 	padding: 0 12px
 	background-color: $clr-white
 	border-top: border-separator()
+
+.toolbar-error
+	flex: 1
+	min-width: 0
+	font-size: 12px
+	color: #c62828
+	white-space: nowrap
+	overflow: hidden
+	text-overflow: ellipsis
+	margin-right: 8px
 
 .toolbar-controls
 	display: flex
