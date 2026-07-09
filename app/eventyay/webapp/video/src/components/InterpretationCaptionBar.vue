@@ -53,7 +53,10 @@ export default {
 			return this.module?.config?.interpretation || null
 		},
 		visible() {
-			return !!(this.config && this.config.enabled)
+			return !!(this.config && this.config.room_enabled)
+		},
+		liveCaptions() {
+			return !!(this.config?.enabled && this.captionUrl)
 		},
 		languages() {
 			return Array.isArray(this.config?.languages) ? this.config.languages : []
@@ -68,11 +71,21 @@ export default {
 	watch: {
 		languages: {
 			handler(langs) {
-				if (langs?.length && !this.interpretationLang && !this.captionStream) {
+				if (langs?.length && !this.interpretationLang && !this.captionStream && this.liveCaptions) {
 					this.setLanguage(langs[0])
 				}
 			},
 			immediate: true
+		},
+		liveCaptions(isLive) {
+			if (!isLive) {
+				this.stopCaptionStream()
+				if (this.ttsEnabled) this.toggleTts()
+			} else if (this.interpretationLang) {
+				this.startCaptionStream(this.interpretationLang)
+			} else if (this.languages?.length) {
+				this.setLanguage(this.languages[0])
+			}
 		},
 		visible(isVisible) {
 			if (!isVisible) this.teardown()
@@ -91,7 +104,7 @@ export default {
 			this.stopCaptionStream()
 			this.interpretationLang = lang
 			this.captionText = ''
-			if (lang) {
+			if (lang && this.liveCaptions) {
 				this.startCaptionStream(lang)
 				if (this.ttsEnabled) {
 					this.stopTtsStream()
@@ -106,7 +119,7 @@ export default {
 				this.stopTtsStream()
 				this.ttsEnabled = false
 			} else {
-				if (!this.ttsUrl || !this.interpretationLang) return
+				if (!this.ttsUrl || !this.interpretationLang || !this.liveCaptions) return
 				this.ttsEnabled = true
 				this.startTtsStream()
 			}

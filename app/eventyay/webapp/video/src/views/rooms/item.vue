@@ -101,7 +101,7 @@ export default {
 		},
 		interpretationCaptionsActive() {
 			const cfg = this.streamModule?.config?.interpretation
-			return !!(cfg && cfg.enabled)
+			return !!(cfg && cfg.room_enabled)
 		},
 		unreadTabsClasses() {
 			return Object.entries(this.unreadTabs).filter(([tab, value]) => value).map(([tab]) => `tab-${tab}-unread`)

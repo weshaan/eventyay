@@ -165,7 +165,7 @@ export default {
 		},
 		hasInterpretation() {
 			const cfg = this.module.config?.interpretation
-			return !!(cfg && cfg.enabled)
+			return !!(cfg && cfg.room_enabled)
 		}
 	},
 	watch: {

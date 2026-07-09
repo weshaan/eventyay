@@ -8,43 +8,52 @@
 	.setup-notice(v-else-if="setupNotice")
 		p {{ setupNotice.message }}
 		a.dashboard-link(v-if="dashboardUrl", :href="dashboardUrl", target="_blank", rel="noopener noreferrer") Open interpretation dashboard
-	template(v-else-if="showSettings")
-		p.hint Choose transcription and translation providers, caption languages for attendees, then save and start a session when you go live.
-		bunt-select(
-			name="transcription_provider",
-			v-model="form.transcription_provider",
-			:options="transcriptionProviderOptions",
-			label="Transcription provider"
+	template(v-else-if="showInterpreterReady")
+		bunt-switch(
+			name="enable-room-interpretation",
+			:model-value="roomEnabled",
+			@update:model-value="setRoomEnabled",
+			label="Enable live interpretation for this room",
+			:disabled="roomToggleLoading"
 		)
-		bunt-select(
-			name="translation_provider",
-			v-model="form.translation_provider",
-			:options="translationProviderOptions",
-			label="Translation provider"
-		)
-		.caption-languages
-			label.field-label Caption languages
-			.caption-language-row(v-for="(code, index) in captionLanguages", :key="`caption-lang-${index}`")
-				.caption-language-field
-					bunt-select(
-						:name="`caption_language_${index}`",
-						v-model="captionLanguages[index]",
-						:options="languageOptions",
-						label="Language"
-					)
-				.caption-language-action
-					bunt-icon-button.remove-caption-language(@click="removeCaptionLanguage(index)", aria-label="Remove caption language") delete-outline
-			bunt-button.add-language-btn(@click="addCaptionLanguage") + Add caption language
-		.actions
-			bunt-button.btn-save(@click="save", :loading="saving", :error-message="saveError") Save interpretation settings
-		.session-row
-			span.status-label Session:
-			span.status-badge(:class="statusClass") {{ statusLabel }}
-			bunt-button.session-btn(v-if="sessionStatus === 'running'", @click="stopSession", :loading="sessionLoading") Stop session
-			bunt-button.session-btn(v-else, @click="startSession", :loading="sessionLoading", :disabled="!canStartSession") Start session
-		p.session-notice(v-if="form && !form.interpretation_ready") Enable live interpretation on the interpretation dashboard before starting a session.
-		p.session-notice(v-else-if="form && !effectiveStreamUrl") Add a stream URL in the Stream section above and save the room before starting a session.
-		p.session-error(v-if="sessionError") {{ sessionError }}
+		p.hint(v-if="!roomEnabled") Turn on to show the caption bar in the stage room and configure providers below.
+		template(v-if="roomEnabled")
+			p.hint Choose transcription and translation providers, caption languages for attendees, then save and start a session when you go live.
+			bunt-select(
+				name="transcription_provider",
+				v-model="form.transcription_provider",
+				:options="transcriptionProviderOptions",
+				label="Transcription provider"
+			)
+			bunt-select(
+				name="translation_provider",
+				v-model="form.translation_provider",
+				:options="translationProviderOptions",
+				label="Translation provider"
+			)
+			.caption-languages
+				label.field-label Caption languages
+				.caption-language-row(v-for="(code, index) in captionLanguages", :key="`caption-lang-${index}`")
+					.caption-language-field
+						bunt-select(
+							:name="`caption_language_${index}`",
+							v-model="captionLanguages[index]",
+							:options="languageOptions",
+							label="Language"
+						)
+					.caption-language-action
+						bunt-icon-button.remove-caption-language(@click="removeCaptionLanguage(index)", aria-label="Remove caption language") delete-outline
+				bunt-button.add-language-btn(@click="addCaptionLanguage") + Add caption language
+			.actions
+				bunt-button.btn-save(@click="save", :loading="saving", :error-message="saveError") Save interpretation settings
+			.session-row
+				span.status-label Session:
+				span.status-badge(:class="statusClass") {{ statusLabel }}
+				bunt-button.session-btn(v-if="sessionStatus === 'running'", @click="stopSession", :loading="sessionLoading") Stop session
+				bunt-button.session-btn(v-else, @click="startSession", :loading="sessionLoading", :disabled="!canStartSession") Start session
+			p.session-notice(v-if="form && !form.interpretation_ready") Enable live interpretation on the interpretation dashboard before starting a session.
+			p.session-notice(v-else-if="form && !effectiveStreamUrl") Add a stream URL in the Stream section above and save the room before starting a session.
+			p.session-error(v-if="sessionError") {{ sessionError }}
 </template>
 <script>
 import api from 'lib/api'
@@ -154,14 +163,18 @@ export default {
 			sessionLoading: false,
 			sessionError: null,
 			dashboardUrl: '',
+			roomToggleLoading: false,
 		}
 	},
 	computed: {
-		showSettings() {
-			return !!(this.form?.susi_connected)
+		showInterpreterReady() {
+			return !!(this.form?.interpretation_enabled && this.form?.susi_connected)
+		},
+		roomEnabled() {
+			return !!this.form?.room_enabled
 		},
 		setupNotice() {
-			if (!this.form || this.showSettings) return null
+			if (!this.form || this.showInterpreterReady) return null
 			return {
 				message: 'Interpretation plugin is active. Please choose an interpreter on the interpretation dashboard.',
 			}
@@ -175,7 +188,7 @@ export default {
 			)
 		},
 		canStartSession() {
-			return !!(this.form?.interpretation_ready && this.effectiveStreamUrl)
+			return !!(this.form?.room_enabled && this.form?.interpretation_ready && this.effectiveStreamUrl)
 		},
 		sessionStatus() {
 			return this.form?.status === 'running' ? 'running' : 'idle'
@@ -191,6 +204,28 @@ export default {
 		await this.loadConfig()
 	},
 	methods: {
+		async setRoomEnabled(value) {
+			if (!this.form || this.roomToggleLoading) return
+			this.roomToggleLoading = true
+			this.sessionError = null
+			try {
+				const response = await fetch(this.apiUrl('config/'), {
+					method: 'PATCH',
+					headers: this.authHeaders(true),
+					credentials: 'include',
+					body: JSON.stringify({ room_enabled: value }),
+				})
+				const data = await response.json().catch(() => ({}))
+				if (!response.ok) {
+					throw new Error(apiErrorDetail(data) || 'Could not update interpretation')
+				}
+				this.applyConfig(data)
+			} catch (err) {
+				this.sessionError = err.message || 'Could not update interpretation'
+			} finally {
+				this.roomToggleLoading = false
+			}
+		},
 		routing() {
 			const world = this.$store.state.world
 			let organizer = world?.organizer_slug
@@ -288,6 +323,7 @@ export default {
 				target_languages: normalizeCaptionLanguages(this.captionLanguages),
 				transcription_provider: this.form.transcription_provider || '',
 				translation_provider: this.form.translation_provider || '',
+				room_enabled: !!this.form.room_enabled,
 			}
 		},
 		async save({ quiet = false } = {}) {
