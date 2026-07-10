@@ -12,7 +12,7 @@
 					@change="onLangSelect"
 				)
 					option(value="") {{ $t('InterpretationBar:subtitles-off:text') }}
-					option(v-for="lang of languages", :key="lang", :value="lang") {{ lang }}
+					option(v-for="option of languageOptions", :key="option.id", :value="option.id") {{ option.label }}
 			bunt-icon-button.tts-btn(
 				@click="toggleTts",
 				:class="{active: ttsEnabled}",
@@ -25,6 +25,7 @@
 </template>
 <script>
 import { markRaw } from 'vue'
+import { languageOptionsFromCodes } from 'lib/interpretation-languages'
 
 const CAPTION_CLEAR_MS = 15000
 
@@ -61,6 +62,9 @@ export default {
 		languages() {
 			return Array.isArray(this.config?.languages) ? this.config.languages : []
 		},
+		languageOptions() {
+			return languageOptionsFromCodes(this.languages)
+		},
 		captionUrl() {
 			return this.config?.url || null
 		},
@@ -71,8 +75,12 @@ export default {
 	watch: {
 		languages: {
 			handler(langs) {
-				if (langs?.length && !this.interpretationLang && !this.captionStream && this.liveCaptions) {
-					this.setLanguage(langs[0])
+				const codes = Array.isArray(langs) ? langs : []
+				if (this.interpretationLang && !codes.includes(this.interpretationLang)) {
+					this.setLanguage(null)
+				}
+				if (codes.length && !this.interpretationLang && !this.captionStream && this.liveCaptions) {
+					this.setLanguage(codes[0])
 				}
 			},
 			immediate: true

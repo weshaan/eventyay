@@ -55,6 +55,10 @@
 <script>
 import api from 'lib/api'
 import ISO6391 from 'iso-639-1'
+import {
+	languageLabel,
+	normalizeCaptionLanguageCodes,
+} from 'lib/interpretation-languages'
 
 const STATUS_LABELS = {
 	running: 'Running',
@@ -71,13 +75,6 @@ const TRANSLATION_PROVIDER_OPTIONS = [
 	{ id: 'nllb_local', label: 'NLLB (local)' },
 ]
 
-function languageLabel(code) {
-	const english = ISO6391.getName(code) || code
-	const native = ISO6391.getNativeName(code) || english
-	const names = native === english ? english : `${english} - ${native}`
-	return `${names} (${code})`
-}
-
 function buildLanguageOptions() {
 	return ISO6391.getAllCodes().map((code) => ({
 		id: code,
@@ -89,20 +86,7 @@ function withCurrentOption(options, value) {
 	if (!value || options.some((option) => option.id === value)) {
 		return options
 	}
-	return [...options, { id: value, label: value }]
-}
-
-function normalizeCaptionLanguages(codes) {
-	const result = []
-	const seen = new Set()
-	for (const code of codes || []) {
-		const normalized = (code || '').trim()
-		if (normalized && !seen.has(normalized)) {
-			seen.add(normalized)
-			result.push(normalized)
-		}
-	}
-	return result
+	return [...options, { id: value, label: languageLabel(value) }]
 }
 
 function streamUrlFromModules(modules) {
@@ -315,7 +299,7 @@ export default {
 		},
 		payloadFromForm({ syncAttendees = true } = {}) {
 			return {
-				target_languages: normalizeCaptionLanguages(this.captionLanguages),
+				target_languages: normalizeCaptionLanguageCodes(this.captionLanguages),
 				transcription_provider: this.form.transcription_provider || '',
 				translation_provider: this.form.translation_provider || '',
 				room_enabled: !!this.form.room_enabled,

@@ -541,9 +541,16 @@ class RoomModule(BaseModule):
                 try:
                     from interpretation.room_control import resync_attendee_interpretation
 
+                    await database_sync_to_async(self.room.refresh_from_db)(
+                        fields=["module_config"]
+                    )
                     await database_sync_to_async(resync_attendee_interpretation)(
                         self.room, self.consumer.event, notify=False
                     )
+                    await database_sync_to_async(self.room.refresh_from_db)(
+                        fields=["module_config"]
+                    )
+                    new = await database_sync_to_async(serialize_room_config)(self.room)
                 except ImportError:
                     pass
                 except Exception:
