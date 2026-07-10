@@ -92,7 +92,7 @@ def room_action(
             if module_required is not None:
                 module_config = [
                     m.get("config", {})
-                    for m in self.room.module_config
+                    for m in (self.room.module_config or [])
                     if m["type"] == module_required
                 ]
                 if module_config:

@@ -127,7 +127,12 @@ export default {
 			this.error = null
 			this.v$.$touch()
 			if (this.v$.$invalid) return
-			this.$refs.settings?.beforeSave?.()
+			try {
+				await this.$refs.settings?.beforeSave?.()
+			} catch (error) {
+				this.error = error.message || error
+				return
+			}
 			this.saving = true
 			try {
 				let roomId = this.config.id
@@ -148,7 +153,6 @@ export default {
 					module_config: this.config.module_config,
 				})
 				Object.assign(this.config, updated)
-				this.saving = false
 				if (this.creating) {
 					if (streamScheduleDraft) {
 						sessionStorage.setItem(`streamScheduleDraft:${roomId}`, JSON.stringify(streamScheduleDraft))
@@ -162,8 +166,9 @@ export default {
 				}
 			} catch (error) {
 				console.error(error)
-				this.saving = false
 				this.error = error.message || error
+			} finally {
+				this.saving = false
 			}
 		},
 		clearOpenStreamScheduleCreateQuery() {

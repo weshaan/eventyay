@@ -48,7 +48,7 @@
 				bunt-switch(name="disableKb", v-model="disableKb", label="Disable Keyboard Controls")
 				bunt-switch(name="showInfo", v-model="showInfo", label="Hide Video Info")
 		bunt-input(v-else-if="modules['livestream.iframe']", name="iframe-player", v-model="modules['livestream.iframe'].config.url", label="Iframe player url", :hint="IFRAME_PROVIDER_HELP_TEXT")
-	interpretation-settings(v-if="config.id", :room-id="String(config.id)", :modules="modules")
+	interpretation-settings(v-if="config.id", ref="interpretationSettings", :room-id="String(config.id)", :modules="modules")
 </template>
 <script>
 import { defineComponent } from 'vue'
@@ -311,7 +311,10 @@ export default defineComponent({
 				id: ISO6391.getName(code),
 				label: ISO6391.getName(code),
 			}))
-		}
+		},
+		async beforeSave() {
+			await this.$refs.interpretationSettings?.saveIfNeeded?.()
+		},
 	}
 })
 </script>

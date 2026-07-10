@@ -118,7 +118,9 @@ def save_room(event, room, update_fields, old_data, by_user):
         clear_stream_schedules_unless_schedule_driven(room)
         from eventyay.agenda.views.utils import clear_schedule_caches
 
-        clear_schedule_caches(event)
+        # websocket save runs in a thread without django_scopes middleware
+        with scopes_disabled():
+            clear_schedule_caches(event)
     new = RoomConfigSerializer(room).data
 
     AuditLog.objects.create(
@@ -132,7 +134,7 @@ def save_room(event, room, update_fields, old_data, by_user):
         },
     )
 
-    if 'chat.native' in {m['type'] for m in room.module_config}:
+    if 'chat.native' in {m['type'] for m in (room.module_config or [])}:
         Channel.objects.get_or_create(event_id=event.pk, room=room)
     return new
 

@@ -16,9 +16,8 @@
 			label="Enable live interpretation for this room",
 			:disabled="roomToggleLoading"
 		)
-		p.hint(v-if="!roomEnabled") Turn on to show the caption bar in the stage room and configure providers below.
 		template(v-if="roomEnabled")
-			p.hint Choose transcription and translation providers, caption languages for attendees, then save and start a session when you go live.
+			p.hint Choose transcription and translation providers and caption languages, then save the room and start a session when you go live.
 			bunt-select(
 				name="transcription_provider",
 				v-model="form.transcription_provider",
@@ -44,8 +43,6 @@
 					.caption-language-action
 						bunt-icon-button.remove-caption-language(@click="removeCaptionLanguage(index)", aria-label="Remove caption language") delete-outline
 				bunt-button.add-language-btn(@click="addCaptionLanguage") + Add caption language
-			.actions
-				bunt-button.btn-save(@click="save", :loading="saving", :error-message="saveError") Save interpretation settings
 			.session-row
 				span.status-label Session:
 				span.status-badge(:class="statusClass") {{ statusLabel }}
@@ -158,8 +155,6 @@ export default {
 			languageOptions: buildLanguageOptions(),
 			transcriptionProviderOptions: TRANSCRIPTION_PROVIDER_OPTIONS,
 			translationProviderOptions: TRANSLATION_PROVIDER_OPTIONS,
-			saving: false,
-			saveError: null,
 			sessionLoading: false,
 			sessionError: null,
 			dashboardUrl: '',
@@ -318,23 +313,40 @@ export default {
 				this.loading = false
 			}
 		},
-		payloadFromForm() {
+		payloadFromForm({ syncAttendees = true } = {}) {
 			return {
 				target_languages: normalizeCaptionLanguages(this.captionLanguages),
 				transcription_provider: this.form.transcription_provider || '',
 				translation_provider: this.form.translation_provider || '',
 				room_enabled: !!this.form.room_enabled,
+				sync_attendees: syncAttendees,
 			}
 		},
-		async save({ quiet = false } = {}) {
-			if (!quiet) this.saveError = null
-			this.saving = true
+		async saveIfNeeded() {
+			if (!this.pluginActive || !this.roomEnabled || !this.form) return
+			await this.save({ quiet: true, syncAttendees: false })
+		},
+		async syncAttendeesIfNeeded() {
+			if (!this.pluginActive || !this.roomEnabled || !this.form) return
+			const response = await fetch(this.apiUrl('sync/'), {
+				method: 'POST',
+				headers: this.authHeaders(true),
+				credentials: 'include',
+				body: '{}',
+			})
+			const data = await response.json().catch(() => ({}))
+			if (!response.ok) {
+				throw new Error(apiErrorDetail(data) || 'Could not sync interpretation')
+			}
+			this.applyConfig(data)
+		},
+		async save({ quiet = false, syncAttendees = true } = {}) {
 			try {
 				const response = await fetch(this.apiUrl('config/'), {
 					method: 'PATCH',
 					headers: this.authHeaders(true),
 					credentials: 'include',
-					body: JSON.stringify(this.payloadFromForm()),
+					body: JSON.stringify(this.payloadFromForm({ syncAttendees })),
 				})
 				const data = await response.json().catch(() => ({}))
 				if (!response.ok) {
@@ -345,10 +357,7 @@ export default {
 			} catch (err) {
 				const message = err.message || 'Save failed'
 				if (quiet) throw new Error(message)
-				this.saveError = message
 				return false
-			} finally {
-				this.saving = false
 			}
 		},
 		async startSession() {
@@ -463,10 +472,4 @@ export default {
 		&.is-running
 			background: #e8f5e9
 			color: #2e7d32
-	.actions
-		display: flex
-		align-items: center
-		flex-wrap: wrap
-		gap: 12px
-		margin-top: 8px
 </style>

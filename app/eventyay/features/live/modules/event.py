@@ -37,15 +37,19 @@ class EventModule(BaseModule):
 
     @event("update", refresh_user=True)
     async def push_event_update(self, body):
-        self.consumer.room_cache.clear()
-        # Refresh event data from database to ensure we have the latest configuration
-        await database_sync_to_async(self.consumer.event.refresh_from_db)()
-        event_config = await database_sync_to_async(get_event_config_for_user)(
-            self.consumer.event,
-            self.consumer.user,
-        )
-        self.consumer.known_room_id_cache = {r["id"] for r in event_config["rooms"]}
-        await self.consumer.send_json(["event.updated", event_config])
+        try:
+            self.consumer.room_cache.clear()
+            await database_sync_to_async(self.consumer.event.refresh_from_db)()
+            if not self.consumer.user:
+                return
+            event_config = await database_sync_to_async(get_event_config_for_user)(
+                self.consumer.event,
+                self.consumer.user,
+            )
+            self.consumer.known_room_id_cache = {r["id"] for r in event_config["rooms"]}
+            await self.consumer.send_json(["event.updated", event_config])
+        except Exception:
+            logger.exception("event.update failed for event %s", self.consumer.event.id)
 
     @event("schedule.update", refresh_user=True)
     async def push_schedule_update(self, body):

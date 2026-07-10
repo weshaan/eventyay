@@ -179,7 +179,7 @@ def get_room_config(room, permissions):
         # set actual viewer count instead of approximate text
         room_config["users"] = room.current_roomviews
 
-    for module in room.module_config:
+    for module in room.module_config or []:
         module_config = copy.deepcopy(module)
         if module["type"] == "call.bigbluebutton":
             module_config["config"] = {}

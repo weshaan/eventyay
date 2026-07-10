@@ -186,6 +186,9 @@ class MainConsumer(AsyncJsonWebsocketConsumer):
                 await component.dispatch_command(content)
             except ConsumerException as e:
                 await self.send_error(e.code, e.message)
+            except Exception:
+                logger.exception("Command %s failed", content[0])
+                await self.send_error(code="server.error", message="Server error")
         else:
             await self.send_error("protocol.unknown_command")
 

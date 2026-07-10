@@ -537,6 +537,19 @@ class RoomModule(BaseModule):
                 old_data=old,
                 by_user=self.consumer.user,
             )
+            if "module_config" in update_fields:
+                try:
+                    from interpretation.room_control import resync_attendee_interpretation
+
+                    await database_sync_to_async(resync_attendee_interpretation)(
+                        self.room, self.consumer.event, notify=False
+                    )
+                except ImportError:
+                    pass
+                except Exception:
+                    logger.exception(
+                        "interpretation resync failed for room %s", self.room.id
+                    )
             if "sorting_priority" in update_fields:
                 await database_sync_to_async(normalize_after_priority_change)(
                     self.consumer.event,
