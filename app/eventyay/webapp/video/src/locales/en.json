@@ -180,6 +180,7 @@
 	"InterpretationBar:subtitles-off:text": "Off",
 	"InterpretationBar:tts-enable:text": "Enable spoken translation",
 	"InterpretationBar:tts-disable:text": "Disable spoken translation",
+	"InterpretationBar:tts-volume:text": "Spoken translation volume",
 	"MediaSource:call:label": "Private call",
 	"MediaSource:iframe-error:text": "We could not connect to the video conference server, sorry.",
 	"MediaSource:room:hint": "Currently playing",

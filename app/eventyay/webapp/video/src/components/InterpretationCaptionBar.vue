@@ -21,6 +21,18 @@
 				:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
 				:disabled="!interpretationLang || sessionLoading"
 			) account-voice
+			.tts-volume-control(v-if="ttsEnabled")
+				span.tts-volume-icon.mdi.mdi-volume-high(aria-hidden="true")
+				input.tts-volume(
+					type="range",
+					min="0",
+					max="1",
+					step="0.05",
+					:value="ttsVolume",
+					:aria-label="$t('InterpretationBar:tts-volume:text')",
+					:style="{'--tts-volume': ttsVolume}",
+					@input="onTtsVolume"
+				)
 		.toolbar-trailing
 			slot(name="trailing")
 </template>
@@ -62,6 +74,7 @@ export default {
 			captionClearTimer: null,
 			captionStream: null,
 			ttsEnabled: false,
+			ttsVolume: 1,
 			ttsQueue: [],
 			ttsAudioChunkIds: new Set(),
 			ttsPlaying: false,
@@ -231,6 +244,12 @@ export default {
 		setInterpretationTtsActive(active) {
 			this.$store.commit('setInterpretationTtsActive', active)
 		},
+		onTtsVolume(event) {
+			const volume = Math.min(1, Math.max(0, Number(event.target.value)))
+			if (Number.isNaN(volume)) return
+			this.ttsVolume = volume
+			if (this.currentTtsAudio) this.currentTtsAudio.volume = volume
+		},
 		startCaptionStream(lang) {
 			const streamUrl = this.ttsEnabled ? (this.ttsUrl || this.captionUrl) : this.captionUrl
 			if (!streamUrl) return
@@ -315,6 +334,7 @@ export default {
 			const next = this.ttsQueue.shift()
 			this.currentTtsChunkId = next.id
 			const audio = new Audio(next.url)
+			audio.volume = this.ttsVolume
 			this.currentTtsAudio = audio
 			const finish = () => {
 				if (this.currentTtsAudio !== audio) return
@@ -480,4 +500,43 @@ export default {
 	&:disabled
 		opacity: 0.35
 		pointer-events: none
+
+.tts-volume-control
+	display: flex
+	align-items: center
+	gap: 4px
+
+.tts-volume-icon
+	color: rgba(0, 0, 0, 0.7)
+	font-size: 18px
+	line-height: 1
+
+.tts-volume
+	appearance: none
+	width: 88px
+	height: 4px
+	margin: 0 4px 0 0
+	border-radius: 2px
+	outline: none
+	cursor: pointer
+	background: linear-gradient(to right, var(--clr-primary, $clr-primary), calc(var(--tts-volume) * 100%), $clr-disabled-text-light calc(var(--tts-volume) * 100%))
+	&::-webkit-slider-runnable-track
+		appearance: none
+	&::-moz-range-track
+		appearance: none
+	&::-webkit-slider-thumb
+		appearance: none
+		width: 12px
+		height: 12px
+		border-radius: 50%
+		background: var(--clr-primary, $clr-primary)
+	&::-moz-range-thumb
+		width: 12px
+		height: 12px
+		border: none
+		border-radius: 50%
+		background: var(--clr-primary, $clr-primary)
+	&:focus-visible
+		outline: 2px solid var(--clr-primary, $clr-primary)
+		outline-offset: 4px
 </style>
