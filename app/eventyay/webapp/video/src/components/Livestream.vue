@@ -116,11 +116,12 @@ export default {
 			showSourceChooser: false,
 			chosenAlternative: null,
 			nativeMetadataHandler: null,
-			retryTimers: new Set()
+			retryTimers: new Set(),
+			interpretationTtsMuteSaved: null,
 		}
 	},
 	computed: {
-		...mapState(['streamingRoom']),
+		...mapState(['streamingRoom', 'interpretationTtsActive']),
 		...mapGetters(['autoplay']),
 		seekable() {
 			return this.isLive === false || config.seekableLiveStreams
@@ -170,6 +171,9 @@ export default {
 	},
 	watch: {
 		hlsUrl: 'initializePlayer',
+		interpretationTtsActive(active) {
+			this.applyInterpretationTtsMute(active)
+		},
 		'room.currentStream': {
 			handler(newStream, oldStream) {
 				const newId = newStream?.id ?? null
@@ -271,6 +275,9 @@ export default {
 					video.play()
 				}
 				this.onVolumechange()
+				if (this.interpretationTtsActive) {
+					this.applyInterpretationTtsMute(true)
+				}
 			}
 			if (Hls.isSupported()) {
 				const hlsConfig = Object.assign({}, HLS_DEFAULT_CONFIG, config.video_player?.['hls.js'], {
@@ -410,12 +417,36 @@ export default {
 			this.showCaptionsChooser = false
 		},
 		toggleVolume() {
+			if (this.interpretationTtsActive) return
 			this.automuted = false
 			this.$refs.video.muted = !this.muted
 		},
 		onVolumeSlider(event) {
+			if (this.interpretationTtsActive) return
 			this.$refs.video.volume = event.target.value
 			this.volume = event.target.value
+		},
+		applyInterpretationTtsMute(active) {
+			const video = this.$refs.video
+			if (!video) return
+			if (active) {
+				if (this.interpretationTtsMuteSaved === null) {
+					this.interpretationTtsMuteSaved = {
+						muted: video.muted,
+						volume: video.volume,
+					}
+				}
+				video.muted = true
+				this.muted = true
+				return
+			}
+			if (this.interpretationTtsMuteSaved === null) return
+			const saved = this.interpretationTtsMuteSaved
+			this.interpretationTtsMuteSaved = null
+			video.muted = saved.muted
+			video.volume = saved.volume
+			this.muted = saved.muted
+			this.volume = saved.volume
 		},
 		toggleFullscreen() {
 			if (document.fullscreenElement) {
@@ -443,6 +474,12 @@ export default {
 		},
 		onVolumechange() {
 			if (!this.$refs.video) return
+			if (this.interpretationTtsActive) {
+				if (!this.$refs.video.muted) {
+					this.applyInterpretationTtsMute(true)
+				}
+				return
+			}
 			if (this.$refs.video.muted) {
 				this.volume = 0
 				this.muted = true

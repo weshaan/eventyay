@@ -60,6 +60,7 @@ export function applyRunningInterpretation(module, { languages, captionsUrl }) {
 		enabled: true,
 		languages: languages?.length ? languages : (current.languages || []),
 		url: captionsUrl,
+		tts_url: captionsUrl,
 	}
 }
 
@@ -67,6 +68,7 @@ export function applyStoppedInterpretation(module) {
 	if (!module?.config?.interpretation) return
 	module.config.interpretation.enabled = false
 	module.config.interpretation.url = ''
+	module.config.interpretation.tts_url = ''
 }
 
 export async function startInterpretationSession(store, roomId, streamUrl) {

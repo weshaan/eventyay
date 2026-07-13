@@ -23,7 +23,6 @@
 			) account-voice
 		.toolbar-trailing
 			slot(name="trailing")
-	audio(ref="ttsAudio", style="display:none")
 </template>
 <script>
 import { markRaw } from 'vue'
@@ -36,6 +35,11 @@ import {
 	stopInterpretationSession,
 	streamUrlFromStreamModule,
 } from 'lib/interpretation-api'
+import {
+	captureStageAudioState,
+	muteStageAudio,
+	unmuteStageAudio,
+} from 'lib/stage-audio'
 
 const CAPTION_CLEAR_MS = 15000
 
@@ -58,9 +62,13 @@ export default {
 			captionClearTimer: null,
 			captionStream: null,
 			ttsEnabled: false,
-			ttsStream: null,
 			ttsQueue: [],
 			ttsPlaying: false,
+			lastTtsChunkId: 0,
+			currentTtsChunkId: null,
+			currentTtsAudio: null,
+			stageAudioSaved: null,
+			stageMuteRetryTimer: null,
 			sessionLoading: false,
 			sessionError: null,
 		}
@@ -115,7 +123,11 @@ export default {
 		liveCaptions(isLive) {
 			if (!isLive) {
 				this.stopCaptionStream()
-				if (this.ttsEnabled) this.toggleTts()
+				if (this.ttsEnabled) {
+					this.ttsEnabled = false
+					this.setInterpretationTtsActive(false)
+					this.stopTtsPlayback()
+				}
 				if (!this.sessionLoading) {
 					this.interpretationLang = null
 				}
@@ -192,29 +204,72 @@ export default {
 			this.sessionError = null
 			if (lang && this.liveCaptions) {
 				this.startCaptionStream(lang)
-				if (this.ttsEnabled) {
-					this.stopTtsStream()
-					this.startTtsStream()
-				}
 			} else if (this.ttsEnabled) {
-				this.toggleTts()
+				this.ttsEnabled = false
+				this.setInterpretationTtsActive(false)
+				this.stopTtsPlayback()
 			}
 		},
 		toggleTts() {
 			if (this.ttsEnabled) {
-				this.stopTtsStream()
 				this.ttsEnabled = false
+				this.setInterpretationTtsActive(false)
+				this.stopTtsPlayback()
 			} else {
-				if (!this.ttsUrl || !this.interpretationLang || !this.liveCaptions) return
+				if (!this.captionUrl || !this.interpretationLang || !this.liveCaptions) return
 				this.ttsEnabled = true
-				this.startTtsStream()
+				this.setInterpretationTtsActive(true)
+			}
+			if (this.interpretationLang && this.liveCaptions) {
+				this.startCaptionStream(this.interpretationLang)
+			}
+		},
+		setInterpretationTtsActive(active) {
+			this.$store.commit('setInterpretationTtsActive', active)
+			if (active) {
+				if (!this.stageAudioSaved) {
+					this.stageAudioSaved = captureStageAudioState()
+				}
+				muteStageAudio()
+				this.scheduleStageMuteRetries()
+			} else {
+				this.clearStageMuteRetries()
+				if (this.stageAudioSaved) {
+					unmuteStageAudio(this.stageAudioSaved)
+					this.stageAudioSaved = null
+				}
+			}
+		},
+		scheduleStageMuteRetries() {
+			this.clearStageMuteRetries()
+			let attempts = 0
+			this.stageMuteRetryTimer = setInterval(() => {
+				if (!this.ttsEnabled || attempts >= 10) {
+					this.clearStageMuteRetries()
+					return
+				}
+				attempts += 1
+				muteStageAudio()
+			}, 400)
+		},
+		clearStageMuteRetries() {
+			if (this.stageMuteRetryTimer) {
+				clearInterval(this.stageMuteRetryTimer)
+				this.stageMuteRetryTimer = null
 			}
 		},
 		startCaptionStream(lang) {
-			if (!this.captionUrl) return
+			const streamUrl = this.ttsEnabled ? (this.ttsUrl || this.captionUrl) : this.captionUrl
+			if (!streamUrl) return
 			this.stopCaptionStream()
-			const sep = this.captionUrl.includes('?') ? '&' : '?'
-			const url = `${this.captionUrl}${sep}lang=${encodeURIComponent(lang)}`
+			const sep = streamUrl.includes('?') ? '&' : '?'
+			let url = `${streamUrl}${sep}lang=${encodeURIComponent(lang)}`
+			if (this.ttsEnabled) {
+				url += '&tts=1'
+				if (this.lastTtsChunkId > 0) {
+					url += `&last_chunk_id=${this.lastTtsChunkId}`
+				}
+			}
 			const source = markRaw(new EventSource(url, { withCredentials: true }))
 			source.onmessage = (event) => {
 				let data
@@ -224,7 +279,16 @@ export default {
 					return
 				}
 				if (!data || data.status === 'connected') return
-				this.applyCaption(data.translation || data.transcript || '')
+				if (data.translation || data.transcript) {
+					this.applyCaption(data.translation || data.transcript || '')
+				}
+				if (this.ttsEnabled) {
+					const chunkInt = parseInt(data.chunk_id, 10)
+					if (!Number.isNaN(chunkInt) && chunkInt > this.lastTtsChunkId) {
+						this.lastTtsChunkId = chunkInt
+					}
+					this.enqueueTtsAudio(data)
+				}
 			}
 			source.onerror = () => { /* EventSource reconnects */ }
 			this.captionStream = source
@@ -249,66 +313,60 @@ export default {
 			}
 			this.captionText = ''
 		},
-		startTtsStream() {
-			const lang = this.interpretationLang
-			if (!lang || !this.ttsUrl) return
-			const sep = this.ttsUrl.includes('?') ? '&' : '?'
-			const url = `${this.ttsUrl}${sep}tts=1&lang=${encodeURIComponent(lang)}`
-			const source = markRaw(new EventSource(url, { withCredentials: true }))
-			source.onmessage = (event) => {
-				let data
-				try {
-					data = JSON.parse(event.data)
-				} catch (e) {
-					return
-				}
-				if (!data || data.status === 'connected') return
-				if (data.audio_b64) {
-					this.ttsQueue.push(data.audio_b64)
-					if (!this.ttsPlaying) this.playNextTtsChunk()
-				}
+		enqueueTtsAudio(data) {
+			if (!data?.audio_b64) return
+			const chunkId = data.chunk_id
+			const audioUrl = `data:audio/wav;base64,${data.audio_b64}`
+			this.ttsQueue = this.ttsQueue.filter((item) => item.id !== chunkId)
+			if (this.ttsPlaying && this.currentTtsChunkId === chunkId) {
+				this.stopCurrentTtsAudio()
 			}
-			this.ttsStream = source
+			this.ttsQueue.push({ id: chunkId, url: audioUrl })
+			if (!this.ttsPlaying) this.playNextTtsChunk()
 		},
 		playNextTtsChunk() {
 			if (!this.ttsQueue.length) {
 				this.ttsPlaying = false
+				this.currentTtsChunkId = null
 				return
 			}
 			this.ttsPlaying = true
-			const b64 = this.ttsQueue.shift()
-			const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-			const blob = new Blob([bytes], { type: 'audio/wav' })
-			const objectUrl = URL.createObjectURL(blob)
-			const audio = this.$refs.ttsAudio
-			audio.src = objectUrl
+			const next = this.ttsQueue.shift()
+			this.currentTtsChunkId = next.id
+			const audio = new Audio(next.url)
+			this.currentTtsAudio = audio
 			audio.onended = () => {
-				URL.revokeObjectURL(objectUrl)
+				this.currentTtsAudio = null
 				this.playNextTtsChunk()
 			}
 			audio.onerror = () => {
-				URL.revokeObjectURL(objectUrl)
+				this.currentTtsAudio = null
 				this.playNextTtsChunk()
 			}
-			audio.play().catch(() => { this.playNextTtsChunk() })
+			audio.play().catch(() => {
+				this.currentTtsAudio = null
+				this.playNextTtsChunk()
+			})
 		},
-		stopTtsStream() {
-			if (this.ttsStream) {
-				this.ttsStream.close()
-				this.ttsStream = null
+		stopCurrentTtsAudio() {
+			if (this.currentTtsAudio) {
+				this.currentTtsAudio.pause()
+				this.currentTtsAudio.src = ''
+				this.currentTtsAudio = null
 			}
-			const audio = this.$refs.ttsAudio
-			if (audio) {
-				audio.pause()
-				audio.src = ''
-			}
-			this.ttsQueue = []
 			this.ttsPlaying = false
+			this.currentTtsChunkId = null
+		},
+		stopTtsPlayback({ preserveChunkId = false } = {}) {
+			this.stopCurrentTtsAudio()
+			this.ttsQueue = []
+			if (!preserveChunkId) this.lastTtsChunkId = 0
 		},
 		teardown() {
 			this.stopCaptionStream()
-			this.stopTtsStream()
+			this.stopTtsPlayback()
 			this.ttsEnabled = false
+			this.setInterpretationTtsActive(false)
 			this.interpretationLang = null
 			this.sessionError = null
 		}

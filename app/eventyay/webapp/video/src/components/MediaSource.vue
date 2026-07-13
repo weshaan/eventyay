@@ -79,6 +79,7 @@ const janus = ref(null);
 // Mapped state/getters
 const streamingRoom = computed(() => store.state.streamingRoom);
 const youtubeTranslation = computed(() => store.state.youtubeTranslation);
+const interpretationTtsActive = computed(() => store.state.interpretationTtsActive);
 const autoplay = computed(() => store.getters.autoplay);
 
 const module = computed(() => {
@@ -210,6 +211,26 @@ watch(
 )
 
 const isPlayingTranslationVideo = ref(false);
+let mainAudioSuppressedByTts = false;
+
+watch(interpretationTtsActive, (active) => {
+	if (!props.room || shouldUseLivestream.value) return;
+	const isScheduleDriven = module.value && getStagePlaybackMode(module.value) === PLAYBACK_MODE_SCHEDULE_DRIVEN;
+	const streamType = isScheduleDriven ? props.room?.currentStream?.stream_type : null;
+	const isYouTube = streamType === STREAM_TYPE_YOUTUBE || module.value?.type === 'livestream.youtube';
+	if (!isYouTube) return;
+	if (active) {
+		muteYouTubePlayer();
+		mainAudioSuppressedByTts = true;
+	} else if (mainAudioSuppressedByTts) {
+		mainAudioSuppressedByTts = false;
+		if (youtubeTranslation.value?.url && !youtubeTranslation.value?.useVideo) {
+			muteYouTubePlayer();
+		} else {
+			unmuteYouTubePlayer();
+		}
+	}
+});
 
 watch(youtubeTranslation, async (transConfig) => {
 	if (!props.room) return;
@@ -470,6 +491,10 @@ async function initializeIframe(mute, skipConsentCheck = false) {
 				// If translation is already selected, mute the main player (if audio-only)
 				if (youtubeTranslation.value?.url && !youtubeTranslation.value?.useVideo) {
 					setTimeout(() => muteYouTubePlayer(), 1000);
+				}
+				if (interpretationTtsActive.value) {
+					setTimeout(() => muteYouTubePlayer(), 1000);
+					mainAudioSuppressedByTts = true;
 				}
 			};
 		}
