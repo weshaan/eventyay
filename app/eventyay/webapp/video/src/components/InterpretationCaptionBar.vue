@@ -21,6 +21,13 @@
 				:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
 				:disabled="!interpretationLang || sessionLoading"
 			) account-voice
+			select.lang-select.tts-voice-select(
+				v-if="ttsEnabled && ttsVoices.length > 1",
+				:value="ttsVoice",
+				:aria-label="$t('InterpretationBar:tts-voice:text')",
+				@change="onTtsVoice"
+			)
+				option(v-for="voice of ttsVoices", :key="voice.id", :value="voice.id") {{ voice.label }}
 			.tts-volume-control(v-if="ttsEnabled")
 				span.tts-volume-icon.mdi.mdi-volume-high(aria-hidden="true")
 				input.tts-volume(
@@ -75,6 +82,8 @@ export default {
 			captionStream: null,
 			ttsEnabled: false,
 			ttsVolume: 1,
+			ttsVoice: 'auto',
+			ttsVoices: [],
 			ttsQueue: [],
 			ttsAudioChunkIds: new Set(),
 			ttsPlaying: false,
@@ -250,6 +259,34 @@ export default {
 			this.ttsVolume = volume
 			if (this.currentTtsAudio) this.currentTtsAudio.volume = volume
 		},
+		onTtsVoice(event) {
+			const voice = event.target.value
+			if (voice === this.ttsVoice || !this.ttsVoices.some((option) => option.id === voice)) return
+			this.ttsVoice = voice
+			if (this.ttsEnabled && this.interpretationLang && this.liveCaptions) {
+				this.stopTtsPlayback()
+				this.startCaptionStream(this.interpretationLang)
+			}
+		},
+		applyTtsVoices(data) {
+			if (!Array.isArray(data?.tts_voices)) return
+			const voices = data.tts_voices.filter((voice) => (
+				voice
+				&& typeof voice.id === 'string'
+				&& voice.id
+				&& typeof voice.label === 'string'
+				&& voice.label
+			))
+			if (!voices.length) return
+			this.ttsVoices = voices
+			if (!voices.some((voice) => voice.id === this.ttsVoice)) {
+				const defaultVoice = data.tts_default_voice
+				&& voices.some((voice) => voice.id === data.tts_default_voice)
+				? data.tts_default_voice
+				: voices[0].id
+				this.ttsVoice = defaultVoice
+			}
+		},
 		startCaptionStream(lang) {
 			const streamUrl = this.ttsEnabled ? (this.ttsUrl || this.captionUrl) : this.captionUrl
 			if (!streamUrl) return
@@ -262,6 +299,7 @@ export default {
 			const url = buildCaptionStreamUrl(streamUrl, {
 				language: lang,
 				tts: ttsForStream,
+				voice: ttsForStream ? this.ttsVoice : '',
 				lastChunkId: streamStartChunkId,
 			})
 			const source = markRaw(new EventSource(url, { withCredentials: true }))
@@ -273,7 +311,11 @@ export default {
 				} catch (e) {
 					return
 				}
-				if (!data || data.status === 'connected') return
+				if (!data) return
+				if (data.status === 'connected') {
+					this.applyTtsVoices(data)
+					return
+				}
 				const chunkId = Number.parseInt(data.chunk_id, 10)
 				if (!Number.isNaN(chunkId) && chunkId <= streamStartChunkId) return
 				this.lastCaptionChunkId = advanceCaptionChunkId(this.lastCaptionChunkId, data.chunk_id)
@@ -500,6 +542,11 @@ export default {
 	&:disabled
 		opacity: 0.35
 		pointer-events: none
+
+.tts-voice-select
+	min-width: 96px
+	border-radius: 6px
+	background-color: rgba(0, 0, 0, 0.04)
 
 .tts-volume-control
 	display: flex

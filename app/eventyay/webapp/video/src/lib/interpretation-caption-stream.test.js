@@ -17,8 +17,13 @@ assert.strictEqual(
 	'/captions/?lang=de&last_chunk_id=9'
 )
 assert.strictEqual(
-	buildCaptionStreamUrl('/captions/?token=x', { language: 'de', tts: true, lastChunkId: 9 }),
-	'/captions/?token=x&lang=de&tts=1&last_chunk_id=9'
+	buildCaptionStreamUrl('/captions/?token=x', {
+		language: 'de',
+		tts: true,
+		voice: 'F3',
+		lastChunkId: 9,
+	}),
+	'/captions/?token=x&lang=de&tts=1&voice=F3&last_chunk_id=9'
 )
 
 console.log('interpretation-caption-stream ok')
