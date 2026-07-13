@@ -35,11 +35,6 @@ import {
 	stopInterpretationSession,
 	streamUrlFromStreamModule,
 } from 'lib/interpretation-api'
-import {
-	captureStageAudioState,
-	muteStageAudio,
-	unmuteStageAudio,
-} from 'lib/stage-audio'
 
 const CAPTION_CLEAR_MS = 15000
 
@@ -67,8 +62,6 @@ export default {
 			lastTtsChunkId: 0,
 			currentTtsChunkId: null,
 			currentTtsAudio: null,
-			stageAudioSaved: null,
-			stageMuteRetryTimer: null,
 			sessionLoading: false,
 			sessionError: null,
 		}
@@ -226,37 +219,6 @@ export default {
 		},
 		setInterpretationTtsActive(active) {
 			this.$store.commit('setInterpretationTtsActive', active)
-			if (active) {
-				if (!this.stageAudioSaved) {
-					this.stageAudioSaved = captureStageAudioState()
-				}
-				muteStageAudio()
-				this.scheduleStageMuteRetries()
-			} else {
-				this.clearStageMuteRetries()
-				if (this.stageAudioSaved) {
-					unmuteStageAudio(this.stageAudioSaved)
-					this.stageAudioSaved = null
-				}
-			}
-		},
-		scheduleStageMuteRetries() {
-			this.clearStageMuteRetries()
-			let attempts = 0
-			this.stageMuteRetryTimer = setInterval(() => {
-				if (!this.ttsEnabled || attempts >= 10) {
-					this.clearStageMuteRetries()
-					return
-				}
-				attempts += 1
-				muteStageAudio()
-			}, 400)
-		},
-		clearStageMuteRetries() {
-			if (this.stageMuteRetryTimer) {
-				clearInterval(this.stageMuteRetryTimer)
-				this.stageMuteRetryTimer = null
-			}
 		},
 		startCaptionStream(lang) {
 			const streamUrl = this.ttsEnabled ? (this.ttsUrl || this.captionUrl) : this.captionUrl

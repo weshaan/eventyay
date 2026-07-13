@@ -222,13 +222,14 @@ watch(interpretationTtsActive, (active) => {
 	if (active) {
 		muteYouTubePlayer();
 		mainAudioSuppressedByTts = true;
-	} else if (mainAudioSuppressedByTts) {
-		mainAudioSuppressedByTts = false;
-		if (youtubeTranslation.value?.url && !youtubeTranslation.value?.useVideo) {
-			muteYouTubePlayer();
-		} else {
-			unmuteYouTubePlayer();
-		}
+		return;
+	}
+	if (!mainAudioSuppressedByTts) return;
+	mainAudioSuppressedByTts = false;
+	if (youtubeTranslation.value?.url && !youtubeTranslation.value?.useVideo) {
+		muteYouTubePlayer();
+	} else {
+		unmuteYouTubePlayer();
 	}
 });
 

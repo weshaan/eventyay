@@ -117,7 +117,7 @@ export default {
 			chosenAlternative: null,
 			nativeMetadataHandler: null,
 			retryTimers: new Set(),
-			interpretationTtsMuteSaved: null,
+			preTtsAudio: null,
 		}
 	},
 	computed: {
@@ -171,8 +171,11 @@ export default {
 	},
 	watch: {
 		hlsUrl: 'initializePlayer',
-		interpretationTtsActive(active) {
-			this.applyInterpretationTtsMute(active)
+		interpretationTtsActive: {
+			handler(active) {
+				this.syncInterpretationTtsAudio(active)
+			},
+			flush: 'sync',
 		},
 		'room.currentStream': {
 			handler(newStream, oldStream) {
@@ -276,7 +279,7 @@ export default {
 				}
 				this.onVolumechange()
 				if (this.interpretationTtsActive) {
-					this.applyInterpretationTtsMute(true)
+					this.syncInterpretationTtsAudio(true)
 				}
 			}
 			if (Hls.isSupported()) {
@@ -426,27 +429,27 @@ export default {
 			this.$refs.video.volume = event.target.value
 			this.volume = event.target.value
 		},
-		applyInterpretationTtsMute(active) {
+		syncInterpretationTtsAudio(active) {
 			const video = this.$refs.video
 			if (!video) return
 			if (active) {
-				if (this.interpretationTtsMuteSaved === null) {
-					this.interpretationTtsMuteSaved = {
+				if (!this.preTtsAudio) {
+					this.preTtsAudio = {
 						muted: video.muted,
-						volume: video.volume,
+						automuted: this.automuted,
 					}
 				}
 				video.muted = true
 				this.muted = true
 				return
 			}
-			if (this.interpretationTtsMuteSaved === null) return
-			const saved = this.interpretationTtsMuteSaved
-			this.interpretationTtsMuteSaved = null
+			if (!this.preTtsAudio) return
+			const saved = this.preTtsAudio
+			this.preTtsAudio = null
 			video.muted = saved.muted
-			video.volume = saved.volume
 			this.muted = saved.muted
-			this.volume = saved.volume
+			this.volume = video.volume
+			this.automuted = !!saved.automuted && saved.muted
 		},
 		toggleFullscreen() {
 			if (document.fullscreenElement) {
@@ -476,17 +479,12 @@ export default {
 			if (!this.$refs.video) return
 			if (this.interpretationTtsActive) {
 				if (!this.$refs.video.muted) {
-					this.applyInterpretationTtsMute(true)
+					this.syncInterpretationTtsAudio(true)
 				}
 				return
 			}
-			if (this.$refs.video.muted) {
-				this.volume = 0
-				this.muted = true
-			} else {
-				this.volume = this.$refs.video.volume
-				this.muted = false
-			}
+			this.volume = this.$refs.video.volume
+			this.muted = this.$refs.video.muted
 		},
 		onDurationchange() {
 			if (!this.$refs.video) return
