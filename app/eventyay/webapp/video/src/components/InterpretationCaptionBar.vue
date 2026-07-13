@@ -26,6 +26,11 @@
 </template>
 <script>
 import { markRaw } from 'vue'
+import {
+	advanceCaptionChunkId,
+	buildCaptionStreamUrl,
+	captionStreamStartChunkId,
+} from 'lib/interpretation-caption-stream'
 import { languageOptionsFromCodes } from 'lib/interpretation-languages'
 import {
 	applyRunningInterpretation,
@@ -58,8 +63,9 @@ export default {
 			captionStream: null,
 			ttsEnabled: false,
 			ttsQueue: [],
+			ttsAudioChunkIds: new Set(),
 			ttsPlaying: false,
-			lastTtsChunkId: 0,
+			lastCaptionChunkId: 0,
 			currentTtsChunkId: null,
 			currentTtsAudio: null,
 			sessionLoading: false,
@@ -124,6 +130,7 @@ export default {
 				if (!this.sessionLoading) {
 					this.interpretationLang = null
 				}
+				this.lastCaptionChunkId = 0
 			} else if (this.interpretationLang && !this.captionStream) {
 				this.startCaptionStream(this.interpretationLang)
 			}
@@ -165,10 +172,12 @@ export default {
 					}
 					applyStoppedInterpretation(this.module)
 					this.applyLanguageSelection(null, { localOnly: true })
+					this.lastCaptionChunkId = 0
 					return
 				}
 
 				if (!this.liveCaptions) {
+					this.lastCaptionChunkId = 0
 					const streamUrl = streamUrlFromStreamModule(this.module)
 					if (!streamUrl) {
 						throw new Error('Add a stream URL in room settings and save the room first.')
@@ -191,7 +200,9 @@ export default {
 				if (lang && this.liveCaptions) this.startCaptionStream(lang)
 				return
 			}
+			const languageChanged = lang !== this.interpretationLang
 			this.stopCaptionStream()
+			if (languageChanged && this.ttsEnabled) this.stopTtsPlayback()
 			this.interpretationLang = lang
 			this.captionText = ''
 			this.sessionError = null
@@ -223,17 +234,20 @@ export default {
 		startCaptionStream(lang) {
 			const streamUrl = this.ttsEnabled ? (this.ttsUrl || this.captionUrl) : this.captionUrl
 			if (!streamUrl) return
-			this.stopCaptionStream()
-			const sep = streamUrl.includes('?') ? '&' : '?'
-			let url = `${streamUrl}${sep}lang=${encodeURIComponent(lang)}`
-			if (this.ttsEnabled) {
-				url += '&tts=1'
-				if (this.lastTtsChunkId > 0) {
-					url += `&last_chunk_id=${this.lastTtsChunkId}`
-				}
-			}
+			const ttsForStream = this.ttsEnabled
+			const streamStartChunkId = captionStreamStartChunkId(this.lastCaptionChunkId, {
+				tts: ttsForStream,
+				hasCurrentCaption: !!this.captionText,
+			})
+			this.stopCaptionStream({ clearCaption: false })
+			const url = buildCaptionStreamUrl(streamUrl, {
+				language: lang,
+				tts: ttsForStream,
+				lastChunkId: streamStartChunkId,
+			})
 			const source = markRaw(new EventSource(url, { withCredentials: true }))
 			source.onmessage = (event) => {
+				if (this.captionStream !== source) return
 				let data
 				try {
 					data = JSON.parse(event.data)
@@ -241,16 +255,13 @@ export default {
 					return
 				}
 				if (!data || data.status === 'connected') return
+				const chunkId = Number.parseInt(data.chunk_id, 10)
+				if (!Number.isNaN(chunkId) && chunkId <= streamStartChunkId) return
+				this.lastCaptionChunkId = advanceCaptionChunkId(this.lastCaptionChunkId, data.chunk_id)
 				if (data.translation || data.transcript) {
 					this.applyCaption(data.translation || data.transcript || '')
 				}
-				if (this.ttsEnabled) {
-					const chunkInt = parseInt(data.chunk_id, 10)
-					if (!Number.isNaN(chunkInt) && chunkInt > this.lastTtsChunkId) {
-						this.lastTtsChunkId = chunkInt
-					}
-					this.enqueueTtsAudio(data)
-				}
+				if (ttsForStream) this.enqueueTtsAudio(data)
 			}
 			source.onerror = () => { /* EventSource reconnects */ }
 			this.captionStream = source
@@ -264,20 +275,28 @@ export default {
 				this.captionText = ''
 			}, CAPTION_CLEAR_MS)
 		},
-		stopCaptionStream() {
+		stopCaptionStream({ clearCaption = true } = {}) {
 			if (this.captionStream) {
-				this.captionStream.close()
+				const source = this.captionStream
 				this.captionStream = null
+				source.onmessage = null
+				source.onerror = null
+				source.close()
 			}
-			if (this.captionClearTimer) {
-				clearTimeout(this.captionClearTimer)
-				this.captionClearTimer = null
+			if (clearCaption) {
+				if (this.captionClearTimer) {
+					clearTimeout(this.captionClearTimer)
+					this.captionClearTimer = null
+				}
+				this.captionText = ''
 			}
-			this.captionText = ''
 		},
 		enqueueTtsAudio(data) {
 			if (!data?.audio_b64) return
 			const chunkId = data.chunk_id
+			const chunkKey = chunkId == null ? null : String(chunkId)
+			if (chunkKey && this.ttsAudioChunkIds.has(chunkKey)) return
+			if (chunkKey) this.ttsAudioChunkIds.add(chunkKey)
 			const audioUrl = `data:audio/wav;base64,${data.audio_b64}`
 			this.ttsQueue = this.ttsQueue.filter((item) => item.id !== chunkId)
 			if (this.ttsPlaying && this.currentTtsChunkId === chunkId) {
@@ -287,7 +306,7 @@ export default {
 			if (!this.ttsPlaying) this.playNextTtsChunk()
 		},
 		playNextTtsChunk() {
-			if (!this.ttsQueue.length) {
+			if (!this.ttsEnabled || !this.ttsQueue.length) {
 				this.ttsPlaying = false
 				this.currentTtsChunkId = null
 				return
@@ -297,39 +316,39 @@ export default {
 			this.currentTtsChunkId = next.id
 			const audio = new Audio(next.url)
 			this.currentTtsAudio = audio
-			audio.onended = () => {
+			const finish = () => {
+				if (this.currentTtsAudio !== audio) return
 				this.currentTtsAudio = null
 				this.playNextTtsChunk()
 			}
-			audio.onerror = () => {
-				this.currentTtsAudio = null
-				this.playNextTtsChunk()
-			}
-			audio.play().catch(() => {
-				this.currentTtsAudio = null
-				this.playNextTtsChunk()
-			})
+			audio.onended = finish
+			audio.onerror = finish
+			audio.play().catch(finish)
 		},
 		stopCurrentTtsAudio() {
 			if (this.currentTtsAudio) {
-				this.currentTtsAudio.pause()
-				this.currentTtsAudio.src = ''
+				const audio = this.currentTtsAudio
 				this.currentTtsAudio = null
+				audio.onended = null
+				audio.onerror = null
+				audio.pause()
+				audio.src = ''
 			}
 			this.ttsPlaying = false
 			this.currentTtsChunkId = null
 		},
-		stopTtsPlayback({ preserveChunkId = false } = {}) {
-			this.stopCurrentTtsAudio()
+		stopTtsPlayback() {
 			this.ttsQueue = []
-			if (!preserveChunkId) this.lastTtsChunkId = 0
+			this.ttsAudioChunkIds.clear()
+			this.stopCurrentTtsAudio()
 		},
 		teardown() {
 			this.stopCaptionStream()
-			this.stopTtsPlayback()
 			this.ttsEnabled = false
+			this.stopTtsPlayback()
 			this.setInterpretationTtsActive(false)
 			this.interpretationLang = null
+			this.lastCaptionChunkId = 0
 			this.sessionError = null
 		}
 	}
