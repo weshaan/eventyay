@@ -48,7 +48,11 @@ import { markRaw } from 'vue'
 import {
 	advanceCaptionChunkId,
 	buildCaptionStreamUrl,
+	captionReadDurationMs,
 	captionStreamStartChunkId,
+	enqueueCaption,
+	normalizeCaptionText,
+	shouldAcceptCaptionChunk,
 } from 'lib/interpretation-caption-stream'
 import { languageOptionsFromCodes } from 'lib/interpretation-languages'
 import {
@@ -60,7 +64,7 @@ import {
 	streamUrlFromStreamModule,
 } from 'lib/interpretation-api'
 
-const CAPTION_CLEAR_MS = 15000
+const CAPTION_IDLE_CLEAR_MS = 15000
 
 export default {
 	name: 'InterpretationCaptionBar',
@@ -78,7 +82,11 @@ export default {
 		return {
 			interpretationLang: null,
 			captionText: '',
-			captionClearTimer: null,
+			captionQueue: [],
+			seenCaptionChunkIds: new Set(),
+			captionHoldUntil: 0,
+			captionHoldTimer: null,
+			captionIdleTimer: null,
 			captionStream: null,
 			ttsEnabled: false,
 			ttsVolume: 1,
@@ -88,6 +96,7 @@ export default {
 			ttsAudioChunkIds: new Set(),
 			ttsPlaying: false,
 			lastCaptionChunkId: 0,
+			lastCaptionDisplayChunkId: null,
 			currentTtsChunkId: null,
 			currentTtsAudio: null,
 			sessionLoading: false,
@@ -319,22 +328,68 @@ export default {
 				const chunkId = Number.parseInt(data.chunk_id, 10)
 				if (!Number.isNaN(chunkId) && chunkId <= streamStartChunkId) return
 				this.lastCaptionChunkId = advanceCaptionChunkId(this.lastCaptionChunkId, data.chunk_id)
-				if (data.translation || data.transcript) {
-					this.applyCaption(data.translation || data.transcript || '')
+				const text = normalizeCaptionText(data.translation || data.transcript || '')
+				if (shouldAcceptCaptionChunk(chunkId, this.seenCaptionChunkIds)) {
+					this.enqueueStreamCaption({ chunkId, text })
 				}
 				if (ttsForStream) this.enqueueTtsAudio(data)
 			}
 			source.onerror = () => { /* EventSource reconnects */ }
 			this.captionStream = source
 		},
-		applyCaption(text) {
+		enqueueStreamCaption({ chunkId, text }) {
 			if (!text) return
-			this.sessionError = null
-			this.captionText = text
-			if (this.captionClearTimer) clearTimeout(this.captionClearTimer)
-			this.captionClearTimer = setTimeout(() => {
+			this.captionQueue = enqueueCaption(this.captionQueue, { chunkId, text })
+			this.pumpCaptionQueue()
+		},
+		clearCaptionScheduler() {
+			if (this.captionHoldTimer) {
+				clearTimeout(this.captionHoldTimer)
+				this.captionHoldTimer = null
+			}
+		},
+		resetCaptionQueue({ clearCaption = true } = {}) {
+			this.clearCaptionScheduler()
+			if (this.captionIdleTimer) {
+				clearTimeout(this.captionIdleTimer)
+				this.captionIdleTimer = null
+			}
+			this.captionQueue = []
+			this.seenCaptionChunkIds = new Set()
+			this.captionHoldUntil = 0
+			if (clearCaption) {
 				this.captionText = ''
-			}, CAPTION_CLEAR_MS)
+				this.lastCaptionDisplayChunkId = null
+			}
+		},
+		pumpCaptionQueue() {
+			this.clearCaptionScheduler()
+			const now = Date.now()
+			if (this.captionText && now < this.captionHoldUntil) {
+				this.captionHoldTimer = setTimeout(
+					() => this.pumpCaptionQueue(),
+					this.captionHoldUntil - now,
+				)
+				return
+			}
+			if (!this.captionQueue.length) return
+			const next = this.captionQueue.shift()
+			const backlog = this.captionQueue.length
+			const holdMs = captionReadDurationMs(next.text, { backlog })
+			if (!Number.isNaN(next.chunkId)) {
+				this.seenCaptionChunkIds.add(next.chunkId)
+				this.lastCaptionDisplayChunkId = next.chunkId
+			}
+			this.sessionError = null
+			this.captionText = next.text
+			this.captionHoldUntil = Date.now() + holdMs
+			if (this.captionIdleTimer) clearTimeout(this.captionIdleTimer)
+			this.captionIdleTimer = setTimeout(() => {
+				if (!this.captionQueue.length) this.captionText = ''
+			}, CAPTION_IDLE_CLEAR_MS)
+			if (this.captionQueue.length) {
+				this.captionHoldTimer = setTimeout(() => this.pumpCaptionQueue(), holdMs)
+			}
 		},
 		stopCaptionStream({ clearCaption = true } = {}) {
 			if (this.captionStream) {
@@ -345,11 +400,7 @@ export default {
 				source.close()
 			}
 			if (clearCaption) {
-				if (this.captionClearTimer) {
-					clearTimeout(this.captionClearTimer)
-					this.captionClearTimer = null
-				}
-				this.captionText = ''
+				this.resetCaptionQueue({ clearCaption: true })
 			}
 		},
 		enqueueTtsAudio(data) {
