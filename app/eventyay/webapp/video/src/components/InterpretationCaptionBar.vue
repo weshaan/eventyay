@@ -305,6 +305,8 @@ export default {
 				hasCurrentCaption: !!this.captionText,
 			})
 			this.stopCaptionStream({ clearCaption: false })
+			this.seenCaptionChunkIds = new Set()
+			this.captionQueue = []
 			const url = buildCaptionStreamUrl(streamUrl, {
 				language: lang,
 				tts: ttsForStream,

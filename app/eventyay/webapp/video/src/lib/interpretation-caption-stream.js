@@ -30,8 +30,13 @@ export function shouldAcceptCaptionChunk(chunkId, seenChunkIds) {
 export function enqueueCaption(queue, item) {
 	if (!item?.text) return queue
 	const chunkId = item.chunkId
-	if (!Number.isNaN(chunkId) && queue.some((entry) => entry.chunkId === chunkId)) {
-		return queue
+	if (!Number.isNaN(chunkId)) {
+		const existing = queue.findIndex((entry) => entry.chunkId === chunkId)
+		if (existing !== -1) {
+			const next = [...queue]
+			next[existing] = item
+			return next
+		}
 	}
 	return [...queue, item].sort((left, right) => {
 		if (Number.isNaN(left.chunkId)) return 1
