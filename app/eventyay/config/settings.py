@@ -280,7 +280,8 @@ DATABASES = {
         'PASSWORD': conf.postgres_password,
         'HOST': conf.postgres_host,
         'PORT': conf.postgres_port,
-        'CONN_MAX_AGE': 120,
+        # ponytail: DEBUG + threaded runserver + caption SSE exhausts default max_connections (100).
+        'CONN_MAX_AGE': 0 if DEBUG else 120,
     }
 }
 

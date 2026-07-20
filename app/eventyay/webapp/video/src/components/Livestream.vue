@@ -25,8 +25,8 @@
 				bunt-icon-button(v-if="!offline && !hasInterpretation && textTracks.length > 0", @click="toggleCaptions") {{ textTracks.some(t => t.mode === 'showing') ? 'closed-caption' : 'closed-caption-outline' }}
 				bunt-icon-button(v-else-if="!offline && !hasInterpretation && module.config.subtitle_url", @click="openExternalSubtitles") closed-caption-outline
 				bunt-icon-button(v-if="!offline", @click="showLevelChooser = !showLevelChooser") {{ levelIcon }}
-				bunt-icon-button(v-if="!offline", @click="toggleVolume") {{ muted || volume === 0 ? 'volume_off' : 'volume_high' }}
-				input.volume-slider(v-if="!offline", type="range", step="any", min="0", max="1", aria-label="Volume", :value="volume", @input="onVolumeSlider", :style="{'--volume': volume}")
+				bunt-icon-button(v-if="!offline", @click="toggleVolume") {{ displayMuted || displayVolume === 0 ? 'volume_off' : 'volume_high' }}
+				input.volume-slider(v-if="!offline", type="range", step="any", min="0", max="1", aria-label="Volume", :value="displayVolume", @input="onVolumeSlider", :style="{'--volume': displayVolume}")
 				bunt-icon-button(v-if="!offline", @click="toggleFullscreen") {{ fullscreen ? 'fullscreen-exit' : 'fullscreen' }}
 			.source-chooser(v-if="showSourceChooser", @click.stop="")
 				.source(@click="chooseSource(null)", :class="{chosen: !chosenAlternative}") {{ $t('Livestream:default-source:text') }}
@@ -121,7 +121,12 @@ export default {
 		}
 	},
 	computed: {
-		...mapState(['streamingRoom', 'interpretationTtsActive']),
+		...mapState([
+			'streamingRoom',
+			'interpretationTtsActive',
+			'interpretationTtsVolume',
+			'interpretationTtsMuted',
+		]),
 		...mapGetters(['autoplay']),
 		seekable() {
 			return this.isLive === false || config.seekableLiveStreams
@@ -167,7 +172,13 @@ export default {
 		hasInterpretation() {
 			const cfg = this.module.config?.interpretation
 			return !!(cfg && cfg.room_enabled)
-		}
+		},
+		displayVolume() {
+			return this.interpretationTtsActive ? this.interpretationTtsVolume : this.volume
+		},
+		displayMuted() {
+			return this.interpretationTtsActive ? this.interpretationTtsMuted : this.muted
+		},
 	},
 	watch: {
 		hlsUrl: 'initializePlayer',
@@ -420,14 +431,21 @@ export default {
 			this.showCaptionsChooser = false
 		},
 		toggleVolume() {
-			if (this.interpretationTtsActive) return
+			if (this.interpretationTtsActive) {
+				this.$store.commit('setInterpretationTtsMuted', !this.interpretationTtsMuted)
+				return
+			}
 			this.automuted = false
 			this.$refs.video.muted = !this.muted
 		},
 		onVolumeSlider(event) {
-			if (this.interpretationTtsActive) return
-			this.$refs.video.volume = event.target.value
-			this.volume = event.target.value
+			const value = event.target.value
+			if (this.interpretationTtsActive) {
+				this.$store.commit('setInterpretationTtsVolume', value)
+				return
+			}
+			this.$refs.video.volume = value
+			this.volume = value
 		},
 		syncInterpretationTtsAudio(active) {
 			const video = this.$refs.video
@@ -437,8 +455,11 @@ export default {
 					this.preTtsAudio = {
 						muted: video.muted,
 						automuted: this.automuted,
+						volume: video.volume,
 					}
 				}
+				this.$store.commit('setInterpretationTtsVolume', this.preTtsAudio.volume ?? 1)
+				this.$store.commit('setInterpretationTtsMuted', false)
 				video.muted = true
 				this.muted = true
 				return
@@ -448,6 +469,9 @@ export default {
 			this.preTtsAudio = null
 			video.muted = saved.muted
 			this.muted = saved.muted
+			if (typeof saved.volume === 'number') {
+				video.volume = saved.volume
+			}
 			this.volume = video.volume
 			this.automuted = !!saved.automuted && saved.muted
 		},

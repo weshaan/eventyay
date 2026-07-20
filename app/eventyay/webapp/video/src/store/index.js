@@ -45,6 +45,8 @@ export default new Vuex.Store({
 		),
 		youtubeTranslation: null,
 		interpretationTtsActive: false,
+		interpretationTtsVolume: 1,
+		interpretationTtsMuted: false,
 	},
 	getters: {
 		hasPermission(state) {
@@ -119,6 +121,20 @@ export default new Vuex.Store({
 		},
 		setInterpretationTtsActive(state, active) {
 			state.interpretationTtsActive = !!active
+			if (!active) {
+				state.interpretationTtsMuted = false
+			}
+		},
+		setInterpretationTtsVolume(state, volume) {
+			const parsed = Number(volume)
+			if (Number.isNaN(parsed)) return
+			state.interpretationTtsVolume = Math.min(1, Math.max(0, parsed))
+			if (state.interpretationTtsVolume > 0) {
+				state.interpretationTtsMuted = false
+			}
+		},
+		setInterpretationTtsMuted(state, muted) {
+			state.interpretationTtsMuted = !!muted
 		},
 		setStreamPollInterval(state, streamPollInterval) {
 			state.streamPollInterval = streamPollInterval

@@ -15,31 +15,34 @@
 				)
 					option(value="") {{ $t('InterpretationBar:subtitles-off:text') }}
 					option(v-for="option of languageOptions", :key="option.id", :value="option.id") {{ option.label }}
-			bunt-icon-button.tts-btn(
-				@click="toggleTts",
-				:class="{active: ttsEnabled}",
-				:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
-				:disabled="!interpretationLang || sessionLoading"
-			) account-voice
-			select.lang-select.tts-voice-select(
-				v-if="ttsEnabled && ttsVoices.length > 1",
-				:value="ttsVoice",
-				:aria-label="$t('InterpretationBar:tts-voice:text')",
-				@change="onTtsVoice"
-			)
-				option(v-for="voice of ttsVoices", :key="voice.id", :value="voice.id") {{ voice.label }}
-			.tts-volume-control(v-if="ttsEnabled")
-				span.tts-volume-icon.mdi.mdi-volume-high(aria-hidden="true")
-				input.tts-volume(
-					type="range",
-					min="0",
-					max="1",
-					step="0.05",
-					:value="ttsVolume",
-					:aria-label="$t('InterpretationBar:tts-volume:text')",
-					:style="{'--tts-volume': ttsVolume}",
-					@input="onTtsVolume"
+			.tts-split(:class="{active: ttsEnabled, 'has-voices': ttsVoices.length > 1}")
+				bunt-icon-button.tts-btn.tts-split-main(
+					@click="toggleTts",
+					:class="{active: ttsEnabled}",
+					:aria-label="ttsEnabled ? $t('InterpretationBar:tts-disable:text') : $t('InterpretationBar:tts-enable:text')",
+					:disabled="!interpretationLang || sessionLoading"
+				) account-voice
+				menu-dropdown.tts-voice-menu(
+					v-if="ttsVoices.length > 1",
+					v-model="ttsVoiceMenuOpen",
+					:blockBackground="false",
+					placement="bottom-start",
+					:offset="[0, 4]"
 				)
+					template(#button="{toggle}")
+						bunt-icon-button.tts-split-toggle(
+							@click="toggle",
+							:disabled="!interpretationLang || sessionLoading",
+							:aria-label="$t('InterpretationBar:tts-voice:text')",
+						) chevron-down
+					template(#menu)
+						button.tts-voice-option(
+							v-for="voice of ttsVoices",
+							:key="voice.id",
+							type="button",
+							:class="{selected: voice.id === ttsVoice}",
+							@click="selectTtsVoice(voice.id)"
+						) {{ voice.label }}
 		.toolbar-trailing
 			slot(name="trailing")
 </template>
@@ -63,11 +66,14 @@ import {
 	stopInterpretationSession,
 	streamUrlFromStreamModule,
 } from 'lib/interpretation-api'
+import MenuDropdown from 'components/MenuDropdown'
+import { mapState } from 'vuex'
 
 const CAPTION_IDLE_CLEAR_MS = 15000
 
 export default {
 	name: 'InterpretationCaptionBar',
+	components: { MenuDropdown },
 	props: {
 		module: {
 			type: Object,
@@ -89,9 +95,9 @@ export default {
 			captionIdleTimer: null,
 			captionStream: null,
 			ttsEnabled: false,
-			ttsVolume: 1,
 			ttsVoice: 'auto',
 			ttsVoices: [],
+			ttsVoiceMenuOpen: false,
 			ttsQueue: [],
 			ttsAudioChunkIds: new Set(),
 			ttsPlaying: false,
@@ -104,6 +110,7 @@ export default {
 		}
 	},
 	computed: {
+		...mapState(['interpretationTtsVolume', 'interpretationTtsMuted']),
 		config() {
 			return this.module?.config?.interpretation || null
 		},
@@ -139,6 +146,10 @@ export default {
 		showCaptionsPanel() {
 			return !!(this.interpretationLang || this.sessionLoading)
 		},
+		effectiveTtsVolume() {
+			if (this.interpretationTtsMuted) return 0
+			return this.interpretationTtsVolume
+		},
 	},
 	watch: {
 		languages: {
@@ -168,6 +179,9 @@ export default {
 		},
 		visible(isVisible) {
 			if (!isVisible) this.teardown()
+		},
+		effectiveTtsVolume(volume) {
+			if (this.currentTtsAudio) this.currentTtsAudio.volume = volume
 		},
 	},
 	beforeUnmount() {
@@ -262,16 +276,13 @@ export default {
 		setInterpretationTtsActive(active) {
 			this.$store.commit('setInterpretationTtsActive', active)
 		},
-		onTtsVolume(event) {
-			const volume = Math.min(1, Math.max(0, Number(event.target.value)))
-			if (Number.isNaN(volume)) return
-			this.ttsVolume = volume
-			if (this.currentTtsAudio) this.currentTtsAudio.volume = volume
-		},
-		onTtsVoice(event) {
-			const voice = event.target.value
-			if (voice === this.ttsVoice || !this.ttsVoices.some((option) => option.id === voice)) return
+		selectTtsVoice(voice) {
+			if (voice === this.ttsVoice || !this.ttsVoices.some((option) => option.id === voice)) {
+				this.ttsVoiceMenuOpen = false
+				return
+			}
 			this.ttsVoice = voice
+			this.ttsVoiceMenuOpen = false
 			if (this.ttsEnabled && this.interpretationLang && this.liveCaptions) {
 				this.stopTtsPlayback()
 				this.startCaptionStream(this.interpretationLang)
@@ -429,7 +440,7 @@ export default {
 			const next = this.ttsQueue.shift()
 			this.currentTtsChunkId = next.id
 			const audio = new Audio(next.url)
-			audio.volume = this.ttsVolume
+			audio.volume = this.effectiveTtsVolume
 			this.currentTtsAudio = audio
 			const finish = () => {
 				if (this.currentTtsAudio !== audio) return
@@ -582,6 +593,16 @@ export default {
 		color: #111
 		background: #fff
 
+.tts-split
+	display: inline-flex
+	align-items: stretch
+	border-radius: 6px
+	background: rgba(0, 0, 0, 0.04)
+	&.active
+		background: rgba(0, 0, 0, 0.06)
+	&:not(.has-voices) .tts-split-main
+		border-radius: 6px
+
 .tts-btn
 	color: rgba(0, 0, 0, 0.7)
 	width: 36px
@@ -596,47 +617,44 @@ export default {
 		opacity: 0.35
 		pointer-events: none
 
-.tts-voice-select
-	min-width: 96px
-	border-radius: 6px
-	background-color: rgba(0, 0, 0, 0.04)
+.tts-split .tts-split-main
+	border-radius: 0
+	background: transparent
+	&.active
+		background: transparent
 
-.tts-volume-control
-	display: flex
-	align-items: center
-	gap: 4px
-
-.tts-volume-icon
+.tts-split-toggle
+	width: 28px
+	height: 36px
+	border-radius: 0
+	border-left: 1px solid rgba(0, 0, 0, 0.08)
+	background: transparent
 	color: rgba(0, 0, 0, 0.7)
-	font-size: 18px
-	line-height: 1
+	:deep(.bunt-icon)
+		font-size: 18px
+	&:disabled
+		opacity: 0.35
+		pointer-events: none
 
-.tts-volume
-	appearance: none
-	width: 88px
-	height: 4px
-	margin: 0 4px 0 0
-	border-radius: 2px
-	outline: none
+.tts-voice-menu :deep(.menu)
+	min-width: 160px
+
+.tts-voice-option
+	display: block
+	width: 100%
+	height: 32px
+	padding: 0 16px
+	border: none
+	background: transparent
+	color: inherit
+	font: inherit
+	line-height: 32px
+	text-align: left
 	cursor: pointer
-	background: linear-gradient(to right, var(--clr-primary, $clr-primary), calc(var(--tts-volume) * 100%), $clr-disabled-text-light calc(var(--tts-volume) * 100%))
-	&::-webkit-slider-runnable-track
-		appearance: none
-	&::-moz-range-track
-		appearance: none
-	&::-webkit-slider-thumb
-		appearance: none
-		width: 12px
-		height: 12px
-		border-radius: 50%
-		background: var(--clr-primary, $clr-primary)
-	&::-moz-range-thumb
-		width: 12px
-		height: 12px
-		border: none
-		border-radius: 50%
-		background: var(--clr-primary, $clr-primary)
-	&:focus-visible
-		outline: 2px solid var(--clr-primary, $clr-primary)
-		outline-offset: 4px
+	&.selected
+		font-weight: 600
+		color: var(--clr-primary, $clr-primary)
+	&:hover
+		background-color: var(--clr-input-primary-bg)
+		color: var(--clr-input-primary-fg)
 </style>
