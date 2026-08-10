@@ -5,6 +5,12 @@
 	.loading(v-if="loading")
 		bunt-progress-circular(size="large")
 	template(v-else)
+		.interpretation-plugin-language-streams(v-if="roomId && showPluginLanguageStreams")
+			LanguageAudioSourceList(
+				title="Languages and Audio Source (Interpretation plugin)"
+				:entries="pluginLanguageStreamEntries"
+			)
+			p.plugin-language-streams-hint Room-level plugin streams used when “Use plugin language streams” is enabled on the Interpretation overview.
 		.stream-schedules-list(v-scrollbar.y="", v-if="streamSchedules && streamSchedules.length > 0")
 			.stream-schedule-item(v-for="schedule in streamSchedules", :key="schedule.id")
 				.info
@@ -20,7 +26,7 @@
 			p Click "Add Stream Schedule" to create one.
 	bunt-button.add-btn(@click="openCreateForm") + Add Stream Schedule
 	transition(name="prompt")
-		prompt.c-stream-schedule-prompt(v-if="showCreateForm || editingSchedule", @close="closeForm")
+		prompt.c-stream-schedule-prompt(v-if="showCreateForm || editingSchedule", @close="closeForm", :scrollable="false")
 			.content
 				h1 {{ editingSchedule ? 'Edit' : 'Create' }} Stream Schedule
 				form.stream-schedule-form(@submit.prevent="saveSchedule")
@@ -38,6 +44,11 @@
 						i All times in {{ eventTimezone }}
 					bunt-select(name="stream_type", v-model="formData.stream_type", label="Stream Type", :options="streamTypes", option-value="id", option-label="label", :validation="v$.formData.stream_type")
 					.field-hint(v-if="formData.stream_type === 'iframe'") {{ IFRAME_PROVIDER_HELP_TEXT }}
+					.language-urls(v-if="formData.stream_type === 'youtube'")
+						LanguageAudioSourceList(
+							title="Languages and Audio Source"
+							:entries="formData.config.languageUrls"
+						)
 					.form-error(v-if="saveError")
 						| {{ saveError }}
 					.form-actions
@@ -50,13 +61,21 @@ import { helpers } from '@vuelidate/validators';
 import { required, url, normalizeYoutubeVideoId } from 'lib/validators';
 import api from 'lib/api';
 import Prompt from 'components/Prompt';
+import LanguageAudioSourceList from 'components/LanguageAudioSourceList';
 import moment from 'lib/timetravelMoment';
 import { IFRAME_PROVIDER_HELP_TEXT } from 'lib/stage-streams';
 
 export default {
 	name: 'StreamSchedule',
-	components: { Prompt },
+	components: { Prompt, LanguageAudioSourceList },
+	inject: {
+		interpretationAdmin: { default: null },
+	},
 	props: {
+		config: {
+			type: Object,
+			default: null,
+		},
 		roomId: {
 			type: [String, Number],
 			default: null,
@@ -93,10 +112,17 @@ export default {
 				start_time: null,
 				end_time: null,
 				stream_type: 'youtube',
+				config: {},
 			},
 		};
 	},
 	computed: {
+		showPluginLanguageStreams() {
+			return Boolean(this.config?.interpretation_use_plugin_streams)
+		},
+		pluginLanguageStreamEntries() {
+			return this.interpretationAdmin?.languageStreams ?? []
+		},
 		eventTimezone() {
 			return this.$store.state.world?.timezone || 'UTC';
 		},
@@ -191,6 +217,10 @@ export default {
 					? this.formData.end_time.toISOString()
 					: null,
 				stream_type: this.formData.stream_type,
+				config: {
+					...this.formData.config,
+					languageUrls: this.formData.config.languageUrls || [],
+				},
 			};
 		},
 		loadSavedDraft() {
@@ -207,6 +237,10 @@ export default {
 					start_time: draft.start_time ? this.parseApiDateTime(draft.start_time).tz(tz) : null,
 					end_time: draft.end_time ? this.parseApiDateTime(draft.end_time).tz(tz) : null,
 					stream_type: draft.stream_type || 'youtube',
+					config: {
+						...(draft.config || {}),
+						languageUrls: draft.config?.languageUrls || [],
+					},
 				};
 			} catch (error) {
 				return null;
@@ -226,7 +260,7 @@ export default {
 			// If not available from world state, try to extract from current URL path
 			if (!organizer || organizer === 'default') {
 				const pathParts = window.location.pathname.split('/').filter(Boolean);
-				// URL pattern: /{organizer}/{event}/video/admin/rooms/{roomId}
+				// URL pattern: /{organizer}/{event}/video/event/rooms/{roomId}
 				if (pathParts.length >= 2) {
 					organizer = pathParts[0];
 					event = pathParts[1];
@@ -281,12 +315,15 @@ export default {
 			this.v$.$reset();
 			this.editingSchedule = schedule;
 			const tz = this.eventTimezone || 'UTC';
+			let config = schedule.config ? JSON.parse(JSON.stringify(schedule.config)) : {};
+			config.languageUrls = config.languageUrls || [];
 			this.formData = {
 				title: schedule.title || '',
 				url: schedule.url,
 				start_time: schedule.start_time ? this.parseApiDateTime(schedule.start_time).tz(tz) : null,
 				end_time: schedule.end_time ? this.parseApiDateTime(schedule.end_time).tz(tz) : null,
 				stream_type: schedule.stream_type,
+				config: config,
 			};
 		},
 		closeForm() {
@@ -298,6 +335,7 @@ export default {
 				start_time: null,
 				end_time: null,
 				stream_type: 'youtube',
+				config: { languageUrls: [] },
 			};
 			this.saveError = null;
 			this.v$.$reset();
@@ -536,6 +574,14 @@ export default {
 		display: flex
 		justify-content: center
 		padding: 24px
+	.interpretation-plugin-language-streams
+		margin-bottom: 24px
+		padding-bottom: 16px
+		border-bottom: 1px solid $clr-grey-300
+		.plugin-language-streams-hint
+			margin: 8px 0 0
+			font-size: 13px
+			color: $clr-secondary-text-light
 	.empty-state
 		text-align: center
 		padding: 24px
@@ -556,6 +602,7 @@ export default {
 		flex-direction: column
 		padding: 32px
 		position: relative
+		overflow-y: auto !important
 		h1
 			margin: 0 0 24px 0
 			font-size: 20px
