@@ -14,6 +14,7 @@
 					:showFavCount="showFavCount",
 					:faved="session.id && favSet.has(session.id)",
 					:onHomeServer="onHomeServer",
+					:showDate="showsMultiDay",
 					@fav="$emit('fav', session.id)",
 					@unfav="$emit('unfav', session.id)"
 				)
@@ -44,6 +45,7 @@ export default {
 			}
 		},
 		currentDay: String,
+		forceScrollDay: { type: Number, default: 0 },
 		now: Object,
 		scrollParent: Element,
 		onHomeServer: Boolean,
@@ -77,7 +79,8 @@ export default {
 	data () {
 		return {
 			getLocalizedString,
-			scrolledDay: null
+			scrolledDay: null,
+			_scrollDayUpdate: false
 		}
 	},
 	computed: {
@@ -86,6 +89,9 @@ export default {
 		},
 		favSet () {
 			return new Set(this.favs || [])
+		},
+		showsMultiDay () {
+			return !this.includeDateSortKey
 		},
 		/** First session bucket per calendar day (for toolbar day jump without scanning all buckets). */
 		bucketFirstByDay () {
@@ -102,7 +108,8 @@ export default {
 		sessionBuckets () {
 			if (!this.includeDateSortKey) {
 				const sortedFlat = this.sortBucketSessions(this.sessions)
-				const fallbackDate = sortedFlat.length ? sortedFlat[0].start.clone().startOf('day') : moment()
+				const firstStart = sortedFlat.find(session => session.start)?.start
+				const fallbackDate = firstStart ? firstStart.clone().startOf('day') : moment()
 				return [{
 					date: fallbackDate,
 					sessions: sortedFlat
@@ -111,7 +118,12 @@ export default {
 
 			const buckets = {}
 			const seenBreakIds = {}
+			const pendingSessions = []
 			for (const session of this.sessions) {
+				if (!session.start) {
+					if (session.id) pendingSessions.push(session)
+					continue
+				}
 				const key = this.getBucketName(session.start)
 				if (!buckets[key]) {
 					buckets[key] = []
@@ -153,6 +165,13 @@ export default {
 					return a.date.diff(b.date)
 				})
 			}
+			if (pendingSessions.length) {
+				const sortedPending = this.sortBucketSessions(pendingSessions)
+				groupedBuckets.push({
+					date: moment(),
+					sessions: sortedPending,
+				})
+			}
 			return groupedBuckets
 		},
 		sortObserverKey () {
@@ -160,6 +179,9 @@ export default {
 		}
 	},
 	watch: {
+		forceScrollDay () {
+			this.scrollToDay(this.currentDay, { force: true })
+		},
 		async sortObserverKey () {
 			await this.$nextTick()
 			if (this.observer) {
@@ -180,7 +202,13 @@ export default {
 				this.observer.observe(el[0])
 			}
 		},
-		currentDay: 'changeDay'
+		currentDay (day) {
+			if (this._scrollDayUpdate) {
+				this._scrollDayUpdate = false
+				return
+			}
+			this.scrollToDay(day)
+		}
 	},
 	async mounted () {
 		await this.$nextTick()
@@ -249,6 +277,12 @@ export default {
 			}
 
 			if (this.includeDateSortKey) {
+				if (a.schedule_pending && !b.schedule_pending) return 1
+				if (!a.schedule_pending && b.schedule_pending) return -1
+				if (a.schedule_pending || b.schedule_pending || !a.start || !b.start) {
+					const direction = this.sortBy === 'title_desc' ? -1 : 1
+					return this.titleSortKey(a).localeCompare(this.titleSortKey(b)) * direction
+				}
 				const dateCmp = a.start.diff(b.start)
 				if (dateCmp !== 0) return dateCmp
 			}
@@ -273,19 +307,21 @@ export default {
 			const rect = this.$parent.$el.getBoundingClientRect()
 			return rect.top + window.scrollY
 		},
-		changeDay (day) {
-			if (!this.showDayHeaders) return
-			if (this.scrolledDay?.format('YYYY-MM-DD') === day) return
-			const dayBucket = this.bucketFirstByDay[day]
+		scrollToDay (day, { force = false } = {}) {
+			if (!this.showDayHeaders || !day) return
+			const dayStr = day.format ? day.format('YYYY-MM-DD') : day
+			if (!force && this.scrolledDay?.format('YYYY-MM-DD') === dayStr) return
+			const dayBucket = this.bucketFirstByDay[dayStr]
 			if (!dayBucket) return
 			const el = this.$refs[this.getBucketName(dayBucket.date)]?.[0]
 			if (!el) return
-			const scrollTop = el.offsetTop + this.getOffsetTop() - 8
 			if (this.scrollParent) {
-				this.scrollParent.scrollTop = scrollTop
+				const top = el.getBoundingClientRect().top - this.scrollParent.getBoundingClientRect().top + this.scrollParent.scrollTop - 8
+				this.scrollParent.scrollTop = top
 			} else {
-				window.scroll({top: scrollTop})
+				window.scroll({ top: el.offsetTop + this.getOffsetTop() - 8 })
 			}
+			this.scrolledDay = moment.tz(dayStr, 'YYYY-MM-DD', this.timezone).startOf('day')
 		},
 		onIntersect (results) {
 			if (!this.showDayHeaders) return
@@ -293,9 +329,11 @@ export default {
 			const day = moment(intersection.target.dataset.date).tz(this.timezone).startOf('day')
 			if (intersection.isIntersecting) {
 				this.scrolledDay = day
+				this._scrollDayUpdate = true
 				this.$emit('changeDay', this.scrolledDay)
 			} else if (intersection.rootBounds && (intersection.boundingClientRect.y - intersection.rootBounds.y) > 0) {
 				this.scrolledDay = day.clone().subtract(1, 'day')
+				this._scrollDayUpdate = true
 				this.$emit('changeDay', this.scrolledDay)
 			}
 		}

@@ -1,6 +1,12 @@
 version: 2
 
 updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
   - package-ecosystem: "uv"
     directory: "/app"
     schedule:
@@ -30,12 +36,6 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/app/eventyay/webapp/schedule-editor"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 10
-
-  - package-ecosystem: "npm"
-    directory: "/app/eventyay/webapp/webcheckin"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10

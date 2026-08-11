@@ -9,10 +9,10 @@ from django_scopes import scopes_disabled
 from i18nfield.strings import LazyI18nString
 from pytz import timezone
 
-from pretix.base.models import Event, Order, Organizer, Team, User
-from pretix.base.models.organizer import OrganizerBillingModel
-from pretix.testutils.mock import mocker_context
-from tests.base import SoupTest, extract_form_fields
+from eventyay.base.models import Event, Order, Organizer, Team, User
+from eventyay.base.models.organizer import OrganizerBillingModel
+from tests.testutils.mock import mocker_context
+from tests.tickets.base import SoupTest, extract_form_fields
 
 
 class EventsTest(SoupTest):
@@ -42,7 +42,7 @@ class EventsTest(SoupTest):
             name='30C3',
             slug='30c3',
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
-            plugins='pretix.plugins.banktransfer,tests.testdummy',
+            plugins='eventyay.plugins.banktransfer,tests.tickets.testdummy',
         )
         self.event2 = Event.objects.create(
             organizer=self.orga1,
@@ -131,7 +131,7 @@ class EventsTest(SoupTest):
             self.event1.settings.get('payment_banktransfer_bank_details', as_type=LazyI18nString).localize('en')
             == 'Foo'
         )
-        assert 'pretix.plugins.banktransfer' in self.event1.plugins
+        assert 'eventyay.plugins.banktransfer' in self.event1.plugins
         with scopes_disabled():
             assert self.event1.items.count() == 2
             i = self.event1.items.first()
@@ -145,6 +145,28 @@ class EventsTest(SoupTest):
             assert q.name == 'Tickets'
             assert q.size == 300
             assert q.items.count() == 2
+
+    def test_quick_setup_defaults_available_until(self):
+        self.event1.date_to = datetime.datetime(2013, 12, 28, 18, 0, tzinfo=datetime.timezone.utc)
+        self.event1.save()
+        doc = self.get_doc('/control/event/%s/%s/quickstart/' % (self.orga1.slug, self.event1.slug))
+        doc.select('[name=contact_mail]')[0]['value'] = 'test@example.org'
+        doc.select('[name=form-TOTAL_FORMS]')[0]['value'] = '1'
+        doc.select('[name=form-INITIAL_FORMS]')[0]['value'] = '1'
+        doc.select('[name=form-MIN_NUM_FORMS]')[0]['value'] = '0'
+        doc.select('[name=form-MAX_NUM_FORMS]')[0]['value'] = '1000'
+        doc.select('[name=form-0-name_0]')[0]['value'] = 'Normal ticket'
+        doc.select('[name=form-0-default_price]')[0]['value'] = '13.90'
+        doc.select('[name=form-0-quota]')[0]['value'] = '100'
+
+        doc = self.post_doc(
+            '/control/event/%s/%s/quickstart/' % (self.orga1.slug, self.event1.slug),
+            extract_form_fields(doc.select('.container-fluid form')[0]),
+        )
+        assert len(doc.select('.alert-success')) > 0
+        with scopes_disabled():
+            product = self.event1.items.get()
+            assert product.available_until == self.event1.date_to
 
     def test_quick_setup_single_quota(self):
         doc = self.get_doc('/control/event/%s/%s/quickstart/' % (self.orga1.slug, self.event1.slug))
@@ -183,7 +205,7 @@ class EventsTest(SoupTest):
             self.event1.settings.get('payment_banktransfer_bank_details', as_type=LazyI18nString).localize('en')
             == 'Foo'
         )
-        assert 'pretix.plugins.banktransfer' in self.event1.plugins
+        assert 'eventyay.plugins.banktransfer' in self.event1.plugins
         with scopes_disabled():
             assert self.event1.items.count() == 2
             i = self.event1.items.first()
@@ -239,7 +261,7 @@ class EventsTest(SoupTest):
             self.event1.settings.get('payment_banktransfer_bank_details', as_type=LazyI18nString).localize('en')
             == 'Foo'
         )
-        assert 'pretix.plugins.banktransfer' in self.event1.plugins
+        assert 'eventyay.plugins.banktransfer' in self.event1.plugins
         with scopes_disabled():
             assert self.event1.items.count() == 2
             i = self.event1.items.first()
@@ -509,7 +531,7 @@ class EventsTest(SoupTest):
 
     def test_display_settings(self):
         with mocker_context() as mocker:
-            mocked = mocker.patch('pretix.presale.style.regenerate_css.apply_async')
+            mocked = mocker.patch('eventyay.presale.style.regenerate_css.apply_async')
 
             doc = self.get_doc('/control/event/%s/%s/settings/' % (self.orga1.slug, self.event1.slug))
             data = extract_form_fields(doc.select('form')[0])
@@ -556,7 +578,7 @@ class EventsTest(SoupTest):
 
     def test_email_settings(self):
         with mocker_context() as mocker:
-            mocked = mocker.patch('pretix.base.email.CustomSMTPBackend.test')
+            mocked = mocker.patch('eventyay.base.email.CustomSMTPBackend.test')
 
             doc = self.get_doc('/control/event/%s/%s/settings/email' % (self.orga1.slug, self.event1.slug))
             data = extract_form_fields(doc.select('form')[0])
@@ -1209,7 +1231,7 @@ class EventDeletionTest(SoupTest):
             name='30C3',
             slug='30c3',
             date_from=datetime.datetime(2013, 12, 26, tzinfo=datetime.timezone.utc),
-            plugins='pretix.plugins.banktransfer,tests.testdummy',
+            plugins='eventyay.plugins.banktransfer,tests.tickets.testdummy',
             has_subevents=False,
         )
 

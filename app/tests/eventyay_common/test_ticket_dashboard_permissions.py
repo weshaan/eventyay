@@ -17,6 +17,8 @@ from eventyay.eventyay_common.permissions import (
 from eventyay.eventyay_common.views.dashboards import (
     EVENT_SETTINGS_PERMISSION_DIALOG_ID,
     TICKET_PERMISSION_DIALOG_ID,
+    TALK_PERMISSION_DIALOG_ID,
+    VIDEO_PERMISSION_DIALOG_ID,
     EventWidgetGenerator,
     filter_common_event_dashboard_widgets,
 )
@@ -29,6 +31,19 @@ def talk_only_team(db, organizer, event, user):
         name='Talk only',
         all_events=False,
         can_change_submissions=True,
+    )
+    team.limit_events.add(event)
+    team.members.add(user)
+    return team
+
+
+@pytest.fixture
+def video_only_team(db, organizer, event, user):
+    team = Team.objects.create(
+        organizer=organizer,
+        name='Video only',
+        all_events=False,
+        can_video_manage_content=True,
     )
     team.limit_events.add(event)
     team.members.add(user)
@@ -101,9 +116,10 @@ def test_generate_ticket_button_shows_permission_dialog_for_talk_only(
     request.user = user
     request.session = MagicMock()
     html = EventWidgetGenerator.generate_ticket_button(event, request)
-    assert '<button type="button"' in html
     assert f'data-dialog-target="#{TICKET_PERMISSION_DIALOG_ID}"' in html
     assert f'aria-controls="{TICKET_PERMISSION_DIALOG_ID}"' in html
+    # Permission-denied control is an <a role="button"> dialog trigger.
+    assert '<a' in html and 'role="button"' in html
     assert reverse(
         'control:event.index',
         kwargs={'organizer': organizer.slug, 'event': event.slug},
@@ -122,6 +138,38 @@ def test_generate_ticket_button_links_to_control_for_ticket_team(user, organizer
     )
     assert control_url in html
     assert TICKET_PERMISSION_DIALOG_ID not in html
+
+
+@pytest.mark.django_db
+def test_generate_video_button_links_for_video_only_team(user, organizer, event, video_only_team, rf):
+    request = rf.get('/')
+    request.user = user
+    request.session = MagicMock()
+    html = EventWidgetGenerator.generate_video_button(event, request)
+    video_url = reverse(
+        'eventyay_common:event.create_access_to_video',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    )
+    assert video_url in html
+    assert VIDEO_PERMISSION_DIALOG_ID not in html
+
+
+@pytest.mark.django_db
+def test_generate_video_button_shows_video_permission_dialog_for_talk_only(
+    user, organizer, event, talk_only_team, rf
+):
+    request = rf.get('/')
+    request.user = user
+    request.session = MagicMock()
+    html = EventWidgetGenerator.generate_video_button(event, request)
+    assert f'data-dialog-target="#{VIDEO_PERMISSION_DIALOG_ID}"' in html
+    assert f'aria-controls="{VIDEO_PERMISSION_DIALOG_ID}"' in html
+    assert 'role="button"' in html or '<button' in html
+    assert TICKET_PERMISSION_DIALOG_ID not in html
+    assert reverse(
+        'eventyay_common:event.create_access_to_video',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    ) not in html
 
 
 @pytest.mark.django_db
@@ -272,3 +320,60 @@ def test_event_dashboard_shows_ticket_links_for_ticket_team(organizer_client, or
         'control:event.index',
         kwargs={'organizer': organizer.slug, 'event': event.slug},
     ) in content
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL='https://testserver')
+def test_event_dashboard_hides_talk_nav_for_ticket_only(organizer_client, organizer, event):
+    url = reverse(
+        'eventyay_common:event.index',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    )
+    response = organizer_client.get(url)
+    assert response.status_code == 200
+    content = response.content.decode()
+    # Organizer client is a ticket-only team member, so they shouldn't see talks navigation/dashboard
+    assert reverse(
+        'orga:event.dashboard',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    ) not in content
+    assert 'Talks Dashboard' not in content
+
+
+@pytest.mark.django_db
+def test_generate_talk_button_shows_permission_dialog_for_ticket_only(user, organizer, event, team, rf):
+    request = rf.get('/')
+    request.user = user
+    request.session = MagicMock()
+    # team fixture gives user ticket access but no talk access
+    html = EventWidgetGenerator.generate_talk_button(event, request)
+    assert '<a href="#" class="middle-component"' in html
+    assert 'role="button"' in html
+    assert f'data-dialog-target="#{TALK_PERMISSION_DIALOG_ID}"' in html
+    assert f'aria-controls="{TALK_PERMISSION_DIALOG_ID}"' in html
+    assert reverse(
+        'orga:event.dashboard',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    ) not in html
+
+
+@pytest.mark.django_db
+@override_settings(SITE_URL='https://testserver')
+def test_control_event_dashboard_hides_talk_and_video_links_for_ticket_only(organizer_client, organizer, event):
+    url = reverse(
+        'control:event.index',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    )
+    response = organizer_client.get(url)
+    assert response.status_code == 200
+    content = response.content.decode()
+    # Ticket-only user should not see Talks or Videos buttons on the tickets dashboard page
+    assert reverse(
+        'orga:event.dashboard',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    ) not in content
+    assert reverse(
+        'eventyay_common:event.create_access_to_video',
+        kwargs={'organizer': organizer.slug, 'event': event.slug},
+    ) not in content
+

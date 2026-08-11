@@ -1,8 +1,8 @@
 import pytest
 from django_countries.fields import Country
 from django_scopes import scope
-from pretalx.submission.forms import TalkQuestionsForm
-from pretalx.submission.models import Answer, Question, QuestionVariant
+from eventyay.submission.forms import TalkQuestionsForm
+from eventyay.base.models import Answer, TalkQuestion as Question, TalkQuestionVariant as QuestionVariant
 
 from eventyay.helpers.countries import get_country_name
 
@@ -127,6 +127,8 @@ def test_question_base_properties(submission, question):
         ("file", "answer", ""),
         ("choices", "answer", ""),
         ("select", "answer", ""),
+        ("url", "https://example.com", "https://example.com"),
+        ("video", "https://youtu.be/abc", "https://youtu.be/abc"),
         ("country", "DE", get_country_name("DE") or "DE"),
         ("lol", "lol", None),
     ),

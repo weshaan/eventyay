@@ -4,7 +4,7 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 		button.close-button(@click="close()") ✕
 		template(v-if="modalContent && modalContent.contentType === 'session'")
 			h3 {{ modalContent.contentObject.title }}
-				.button-container(v-if="loggedIn", :class="isFaved ? 'faved' : ''")
+				.button-container(v-if="!favsReadOnly", :class="isFaved ? 'faved' : ''")
 					fav-button(@toggleFav="$emit('toggleFav', modalContent.contentObject.id)")
 
 			.card-content
@@ -14,7 +14,7 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 						span.ampm(v-if="getSessionTime(modalContent.contentObject, currentTimezone, locale, hasAmPm).ampm") {{ getSessionTime(modalContent.contentObject, currentTimezone, locale, hasAmPm).ampm }}
 					.room(v-if="modalContent.contentObject.room") {{ getLocalizedString(modalContent.contentObject.room.name) }}
 					.track(v-if="modalContent.contentObject.track", :style="{ color: modalContent.contentObject.track.color }") {{ getLocalizedString(modalContent.contentObject.track.name) }}
-					export-dropdown.session-export-area(v-if="talkExportOptions.length", :options="talkExportOptions", :qrcodesUrl="talkQrcodesUrl")
+					export-dropdown.session-export-area(v-if="talkExportOptions.length || exportsDisabled", :options="talkExportOptions", :qrcodesUrl="talkQrcodesUrl", :disabled="exportsDisabled")
 				.text-content
 					.recording-embed(v-if="modalContent.contentObject.recording_iframe", v-html="modalContent.contentObject.recording_iframe")
 					.field-section(v-if="modalContent.contentObject.abstract")
@@ -23,17 +23,39 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 					.field-section(v-if="modalContent.contentObject.apiContent?.description?.length > 0 || modalContent.contentObject.description?.length > 0")
 						h4.field-heading Description
 						.field-content(v-html="renderRichText(modalContent.contentObject.apiContent?.description || modalContent.contentObject.description)")
+					.field-section.video-embed-section(v-for="(answer, index) in videoAnswers", :key="'api-video-' + index + '-' + videoEmbedSrc(answer)")
+						.video-embed
+							iframe(
+								:src="videoEmbedSrc(answer)",
+								title="Session video",
+								allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+								allowfullscreen,
+								loading="lazy",
+								referrerpolicy="strict-origin-when-cross-origin")
 					template(v-if="modalContent.contentObject.isLoading")
 						bunt-progress-circular(size="big", :page="true")
 					template(v-else)
+						template(v-if="publicVideoScheduleAnswers.length > 0")
+							.field-section.video-embed-section(v-for="(answer, index) in publicVideoScheduleAnswers", :key="'video-' + answer.question_id + '-' + index + '-' + videoEmbedSrc(answer)")
+								.video-embed(v-if="videoEmbedSrc(answer)")
+									iframe(
+										:src="videoEmbedSrc(answer)",
+										title="Session video",
+										allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+										allowfullscreen,
+										loading="lazy",
+										referrerpolicy="strict-origin-when-cross-origin")
+								a(v-else-if="answer.answer", :href="answer.answer", target="_blank", rel="noopener noreferrer") {{ answer.answer }}
 						template(v-if="textAnswers.length > 0")
 							.field-section(v-for="answer in textAnswers", :key="answer.id || answer.question_id")
 								h4.field-heading {{ getLocalizedString(answer.question.question) }}
 								.field-content(v-html="renderRichText(answer.answer)")
-						template(v-if="publicScheduleAnswers.length > 0")
-							.field-section(v-for="answer in publicScheduleAnswers", :key="answer.question_id")
+						template(v-if="publicOtherScheduleAnswers.length > 0")
+							.field-section(v-for="answer in publicOtherScheduleAnswers", :key="answer.question_id")
 								h4.field-heading {{ answer.question }}
-								.field-content(v-html="renderRichText(answer.answer)")
+								.field-content(v-if="answer.variant === 'url'")
+									a(:href="answer.answer", target="_blank", rel="noopener noreferrer") {{ answer.answer }}
+								.field-content(v-else, v-html="renderRichText(answer.answer)")
 						template(v-if="shortAnswers.length > 0 || iconAnswers.length > 0")
 							hr
 							.answers
@@ -43,7 +65,7 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 											img(v-if="answer.question.icon && remoteApiUrl", :src="`${remoteApiUrl}questions/${answer.question.id}/icon/`", :alt="getLocalizedString(answer.question.question)", width="16", height="16")
 											span(v-else) {{ getLocalizedString(answer.question.question) }}
 								.inline-answer(v-for="answer in shortAnswers", :key="answer.id")
-									template(v-if="answer.question.variant === 'url' && answer.answer")
+									template(v-if="(answer.question.variant === 'url' || answer.question.variant === 'video') && answer.answer")
 										strong.question
 											a(:href="answer.answer", target="_blank", rel="noopener noreferrer") {{ getLocalizedString(answer.question.question) }}
 									template(v-else)
@@ -60,7 +82,9 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 							hr
 							h4 {{ t.downloads }}
 							a.download(v-for="{resource, description} of displayResources", :href="resource", target="_blank")
-								.mdi(:class="`mdi-${getIconByFileEnding(resource)}`")
+								svg.download-icon(viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px; flex-shrink: 0; opacity: 0.7;")
+									path(d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71")
+									path(d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71")
 								.filename {{ description }}
 						a.join-room-btn(v-if="showJoinRoom && computedJoinRoomLink", :href="computedJoinRoomLink", @click="$emit('joinRoom', $event)") {{ t.join_room }}
 			.speakers(v-if="modalContent.contentObject.speakers")
@@ -83,7 +107,7 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 								path(fill="currentColor", d="M12,1A5.8,5.8 0 0,1 17.8,6.8A5.8,5.8 0 0,1 12,12.6A5.8,5.8 0 0,1 6.2,6.8A5.8,5.8 0 0,1 12,1M12,15C18.63,15 24,17.67 24,21V23H0V21C0,17.67 5.37,15 12,15Z")
 					.speaker-title
 						h3 {{ modalContent.contentObject.name }}
-						export-dropdown.speaker-export(v-if="speakerExportOptions.length", :options="speakerExportOptions", :qrcodesUrl="speakerQrcodesUrl")
+						export-dropdown.speaker-export(v-if="speakerExportOptions.length || exportsDisabled", :options="speakerExportOptions", :qrcodesUrl="speakerQrcodesUrl", :disabled="exportsDisabled")
 				.speaker-content.card-content
 					.biography(v-if="(modalContent.contentObject.apiContent?.biography || modalContent.contentObject.biography)?.length > 0", v-html="renderRichText(modalContent.contentObject.apiContent?.biography || modalContent.contentObject.biography)")
 					template(v-if="modalContent.contentObject.isLoading")
@@ -127,7 +151,7 @@ dialog.pretalx-modal#session-modal(ref="modal", @click.stop="close()")
 </template>
 
 <script>
-import { getLocalizedString, getSessionTime, getIconByFileEnding, buildExportMenuItems, computeSpeakerExporters, parseBooleanAnswer } from '../utils'
+import { getLocalizedString, getSessionTime, getIconByFileEnding, buildExportMenuItems, computeSpeakerExporters, parseBooleanAnswer, buildQrcodesUrl, getVideoEmbedUrl } from '../utils'
 import { renderEventyayRichText } from '../utils/eventyayRichText'
 import FavButton from './FavButton.vue'
 import Session from './Session.vue'
@@ -139,10 +163,11 @@ export default {
 	inject: {
 		remoteApiUrl: { default: '' },
 		eventUrl: { default: '' },
-		loggedIn: { default: false },
+		favsReadOnly: { default: false },
 		showJoinRoom: { default: false },
 		getJoinRoomLink: { default: () => () => '' },
-		translationMessages: { default: () => ({}) }
+		translationMessages: { default: () => ({}) },
+		exportsDisabled: { default: false },
 	},
 	props: {
 		modalContent: Object,
@@ -169,19 +194,26 @@ export default {
 		displayResources() {
 			const obj = this.modalContent?.contentObject
 			if (!obj) return []
-			return obj.apiContent?.resources ?? obj.resources ?? []
+			const resources = obj.apiContent?.resources ?? obj.resources ?? []
+			return resources.map(r => {
+				const resPath = r.resource || r.link
+				if (resPath && resPath.toLowerCase().endsWith('.pdf')) {
+					return {
+						...r,
+						resource: r.resource ? `${r.resource}#resource` : undefined,
+						link: r.link ? `${r.link}#resource` : undefined
+					}
+				}
+				return r
+			})
 		},
 		talkQrcodesUrl() {
 			const id = this.modalContent?.contentObject?.id
-			if (!this.eventUrl || !id) return ''
-			const base = this.eventUrl.replace(/\/?$/, '/')
-			return `${base}schedule/widgets/qrcodes/talk/${id}.json`
+			return buildQrcodesUrl(this.eventUrl, 'talk', id)
 		},
 		speakerQrcodesUrl() {
 			const code = this.modalContent?.contentObject?.code
-			if (!this.eventUrl || !code) return ''
-			const base = this.eventUrl.replace(/\/?$/, '/')
-			return `${base}schedule/widgets/qrcodes/speaker/${code}.json`
+			return buildQrcodesUrl(this.eventUrl, 'speaker', code)
 		},
 		favSet () {
 			return new Set(this.favs || [])
@@ -219,12 +251,22 @@ export default {
 			const merged = { ...computeSpeakerExporters(base), ...(obj.exporters || {}) }
 			return buildExportMenuItems(merged)
 		},
+		videoAnswers () {
+			const apiContent = this.modalContent?.contentObject?.apiContent
+			if (!apiContent || !apiContent.answers || !apiContent.answers.length) return []
+			return this.expandVideoAnswers(
+				apiContent.answers.filter((answer) => answer.question?.variant === 'video')
+			)
+		},
 		shortAnswers () {
 			const apiContent = this.modalContent.contentObject.apiContent
 			if (!apiContent || !apiContent.answers || !apiContent.answers.length) return []
 			return apiContent.answers.filter((answer) => {
-				// Exclude text/string answers (those go to textAnswers) and URL answers with icons (iconAnswers)
-				return answer.question.variant !== 'text' && answer.question.variant !== 'string' && !(answer.question.variant === 'url' && answer.question.icon)
+				if (answer.question.variant === 'text' || answer.question.variant === 'string') return false
+				if (answer.question.variant === 'url' && answer.question.icon) return false
+				// Embeddable video-link answers are shown as players above
+				if (answer.question.variant === 'video' && this.expandVideoAnswers([answer]).length) return false
+				return true
 			})
 		},
 		iconAnswers () {
@@ -246,9 +288,38 @@ export default {
 
 			const downloadsLabel = (this.t.downloads || '').trim().toLowerCase()
 			return answers.filter((answer) => (answer.question || '').trim().toLowerCase() !== downloadsLabel)
+		},
+		publicVideoScheduleAnswers () {
+			return this.publicScheduleAnswers.filter((answer) => answer.variant === 'video')
+		},
+		publicOtherScheduleAnswers () {
+			return this.publicScheduleAnswers.filter((answer) => answer.variant !== 'video')
 		}
 	},
 	methods: {
+		expandVideoAnswers (answers) {
+			const result = []
+			for (const answer of answers || []) {
+				const raw = answer?.answer || ''
+				const lines = String(raw).split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+				if (lines.length <= 1) {
+					if (this.videoEmbedSrc(answer)) result.push(answer)
+					continue
+				}
+				for (const line of lines) {
+					const embedUrl = getVideoEmbedUrl(line)
+					if (embedUrl) {
+						result.push({ ...answer, answer: line, embed_url: embedUrl })
+					}
+				}
+			}
+			return result
+		},
+		videoEmbedSrc (answer) {
+			if (!answer) return ''
+			if (answer.embed_url) return answer.embed_url
+			return getVideoEmbedUrl(answer.answer)
+		},
 		renderRichText (text) {
 			return renderEventyayRichText(text || '')
 		},
@@ -337,11 +408,17 @@ export default {
 					font-size: 14px
 					text-decoration: none
 					color: var(--pretalx-clr-text)
+					transition: color 0.2s ease
 					&:hover
-						text-decoration: underline
-					.mdi
-						font-size: 24px
-						margin-right: 4px
+						color: var(--pretalx-clr-primary)
+						.download-icon
+							opacity: 1
+							color: var(--pretalx-clr-primary)
+					.download-icon
+						margin-right: 6px
+						flex-shrink: 0
+						opacity: 0.7
+						transition: opacity 0.2s ease, color 0.2s ease
 					.filename
 						flex: 1
 			.join-room-btn
@@ -359,13 +436,15 @@ export default {
 
 	.text-content
 			margin-bottom: 8px
-			.recording-embed
+			.recording-embed,
+			.video-embed
 				margin-bottom: 16px
 				iframe
 					width: 100%
 					aspect-ratio: 16 / 9
 					border: none
 					border-radius: 4px
+					display: block
 			.field-section
 				margin-bottom: 12px
 				.field-heading

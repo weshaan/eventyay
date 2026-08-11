@@ -3,7 +3,7 @@ import json
 import pytest
 from django_scopes import scopes_disabled
 
-from pretalx.api.serializers.team import TeamSerializer
+from eventyay.api.serializers.team import TeamSerializer
 
 
 @pytest.fixture
@@ -31,6 +31,9 @@ def test_team_serializer(team):
             "limit_events",
             "limit_tracks",
             "force_hide_speaker_names",
+            "can_change_exhibition_proposals",
+            "is_exhibition_reviewer",
+            "hide_exhibition_applicant_emails",
             "invites",
             "members",
         }
@@ -411,7 +414,7 @@ def test_orga_can_delete_invite(
         assert not team.invites.filter(pk=invitation.pk).exists()
         assert (
             team.logged_actions()
-            .filter(action_type="pretalx.team.invite.orga.retract")
+            .filter(action_type="eventyay.team.invite.orga.retract")
             .exists()
         )
 
@@ -456,7 +459,7 @@ def test_orga_can_remove_member(
         assert not team.members.filter(pk=orga_user.pk).exists()
         assert (
             team.logged_actions()
-            .filter(action_type="pretalx.team.remove_member")
+            .filter(action_type="eventyay.team.remove_member")
             .exists()
         )
 
@@ -518,3 +521,69 @@ def test_orga_cannot_remove_nonexistent_user(
     assert response.status_code == 400, response.text
     assert "not found" in response.text
     assert team.members.count() == member_count
+
+
+@pytest.mark.django_db
+def test_team_permission_error_caught_in_api(
+    client, orga_user_write_token, organiser, team, orga_user
+):
+    """
+    TeamPermissionError raised by check_access_permissions inside perform_update
+    must be caught by the talk API's TeamViewSet and returned as HTTP 400.
+
+    We trigger it by stripping can_change_teams from the sole team that has
+    members with count > 0, so check_access_permissions finds no admin-capable
+    team and raises TeamPermissionError.
+    """
+    # Confirm team is the only one with members (orga_user is its only member)
+    assert team.members.count() > 0
+    response = client.patch(
+        f"/api/organisers/{organiser.slug}/teams/{team.pk}/",
+        follow=True,
+        data=json.dumps({"can_change_teams": False}),
+        headers={
+            "Authorization": f"Token {orga_user_write_token.token}",
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 400, response.text
+    assert "There must be at least one team with the permission to change teams" in response.text
+    team.refresh_from_db()
+    # The update must have been rolled back
+    assert team.can_change_teams is True
+
+
+@pytest.mark.django_db
+def test_unexpected_exception_propagates_in_api(
+    client, orga_user_write_token, organiser, team, monkeypatch
+):
+    """
+    A non-TeamPermissionError (e.g. DatabaseError) raised inside
+    check_access_permissions must NOT be silently swallowed; it should
+    propagate out of the talk API's TeamViewSet.
+
+    We monkeypatch eventyay.api.views.team.check_access_permissions — the
+    exact symbol imported by the talk TeamViewSet — and verify that
+    DatabaseError escapes the request cycle.
+    """
+    import pytest as _pytest
+    from django.db import DatabaseError
+
+    def mock_check_permissions(orga):
+        raise DatabaseError("Simulated database failure")
+
+    monkeypatch.setattr(
+        "eventyay.api.views.team.check_access_permissions",
+        mock_check_permissions,
+    )
+
+    with _pytest.raises(DatabaseError):
+        client.patch(
+            f"/api/organisers/{organiser.slug}/teams/{team.pk}/",
+            follow=True,
+            data=json.dumps({"name": "Trigger monkeypatch"}),
+            headers={
+                "Authorization": f"Token {orga_user_write_token.token}",
+                "Content-Type": "application/json",
+            },
+        )

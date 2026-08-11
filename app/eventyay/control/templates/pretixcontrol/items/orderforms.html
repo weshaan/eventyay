@@ -8,31 +8,23 @@
 
 {% block custom_header %}
     {{ block.super }}
-    {% compress css %}
-        <link rel="stylesheet" href="{% static 'pretixcontrol/css/order-form-toggles.css' %}">
-    {% endcompress %}
+    <link rel="stylesheet" type="text/css" href="{% static 'pretixcontrol/css/order-form-toggles.css' %}">
     {% compress js %}
         <script defer src="{% static 'pretixcontrol/js/orderFormToggles.js' %}"></script>
     {% endcompress %}
 {% endblock %}
 {% block inside %}
-    <nav id="event-nav" class="header-nav">
-        <div class="navigation">
-            <div class="navigation-title">
-                <h1>{% translate "Order forms" %}</h1>
-            </div>
-            {% include "pretixcontrol/event/component_link.html" %}
-        </div>
-    </nav>
+    {% translate "Order forms" as header_title %}
+    {% include "common/includes/header_nav.html" with header_title=header_title header_component_link="pretixcontrol/event/component_link.html" %}
     
-    <form action="" method="post" class="form-horizontal" enctype="multipart/form-data">
+    <form action="" method="post" class="form-horizontal order-forms-page" enctype="multipart/form-data">
         {% csrf_token %}
         {% bootstrap_form_errors sform %}
         
         <fieldset>
             <legend>{% translate "Customer data (once per order)" %}</legend>
             <div class="table-responsive-sm order-form-table-scroll">
-                <table class="table table-sm order-form-option-table">
+                <table class="table table-sm table-flip order-form-option-table">
                     <colgroup>
                         <col class="field-col" style="width: auto;">
                         <col style="width: 180px;">
@@ -71,15 +63,8 @@
                                     </select>
                                 </div>
                             </td>
-                            <td class="text-center">
-                                {% with twice_field=sform.order_email_asked_twice %}
-                                {% if twice_field %}
-                                <label class="checkbox-inline" title="{% translate 'Ask for the order email address twice' %}">
-                                    <input type="checkbox" name="{{ twice_field.html_name }}" id="{{ twice_field.auto_id }}" {% if twice_field.value %}checked{% endif %} aria-label="{% translate 'Ask for the order email address twice' %}">
-                                    {% translate "Ask twice" %}
-                                </label>
-                                {% endif %}
-                                {% endwith %}
+                            <td class="dnd-container text-center text-nowrap">
+                                <a href="{% url 'control:event.products.orderforms.customerfield' organizer=request.event.organizer.slug event=request.event.slug field='order_email' %}" class="btn btn-default btn-sm" aria-label="{% translate 'Settings for E-mail' %}" title="{% translate 'Settings for E-mail' %}"><i class="fa fa-cog fa-fw"></i></a>
                             </td>
                         </tr>
                         {% endif %}
@@ -108,7 +93,9 @@
                                     </select>
                                 </div>
                             </td>
-                            <td class="text-center"><span class="text-muted">—</span></td>
+                            <td class="dnd-container text-center text-nowrap">
+                                <a href="{% url 'control:event.products.orderforms.customerfield' organizer=request.event.organizer.slug event=request.event.slug field='order_phone' %}" class="btn btn-default btn-sm" aria-label="{% translate 'Settings for Phone number' %}" title="{% translate 'Settings for Phone number' %}"><i class="fa fa-cog fa-fw"></i></a>
+                            </td>
                         </tr>
                         {% endif %}
                         {% endwith %}
@@ -135,7 +122,7 @@
         <fieldset>
             <legend>{% translate "Attendee data (once per admission ticket)" %}</legend>
             <div class="table-responsive-sm order-form-table-scroll">
-                <table class="table table-sm order-form-option-table">
+                <table class="table table-sm table-flip order-form-option-table">
                     <colgroup>
                         <col class="field-col" style="width: auto;">
                         <col style="width: 150px;">
@@ -184,13 +171,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in system_field_products.attendee_name_parts %}
+                                    {% for product in system_field_products.attendee_name_parts|slice:":5" %}
                                         <li>
                                             <a href="{% url 'control:event.product' organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "No products" %}</li>
                                     {% endfor %}
+                                    {% if system_field_products.attendee_name_parts|length > 5 %}
+                                        <li class="text-muted">+{{ system_field_products.attendee_name_parts|length|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">
@@ -249,13 +239,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in system_field_products.attendee_email %}
+                                    {% for product in system_field_products.attendee_email|slice:":5" %}
                                         <li>
                                             <a href="{% url 'control:event.product' organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "No products" %}</li>
                                     {% endfor %}
+                                    {% if system_field_products.attendee_email|length > 5 %}
+                                        <li class="text-muted">+{{ system_field_products.attendee_email|length|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">
@@ -295,13 +288,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in system_field_products.company %}
+                                    {% for product in system_field_products.company|slice:":5" %}
                                         <li>
                                             <a href="{% url 'control:event.product' organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "No products" %}</li>
                                     {% endfor %}
+                                    {% if system_field_products.company|length > 5 %}
+                                        <li class="text-muted">+{{ system_field_products.company|length|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">
@@ -341,13 +337,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in system_field_products.job_title %}
+                                    {% for product in system_field_products.job_title|slice:":5" %}
                                         <li>
                                             <a href="{% url 'control:event.product' organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "No products" %}</li>
                                     {% endfor %}
+                                    {% if system_field_products.job_title|length > 5 %}
+                                        <li class="text-muted">+{{ system_field_products.job_title|length|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">
@@ -387,13 +386,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in system_field_products.street %}
+                                    {% for product in system_field_products.street|slice:":5" %}
                                         <li>
                                             <a href="{% url 'control:event.product' organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "No products" %}</li>
                                     {% endfor %}
+                                    {% if system_field_products.street|length > 5 %}
+                                        <li class="text-muted">+{{ system_field_products.street|length|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">
@@ -447,13 +449,16 @@
                             </td>
                             <td class="text-center">
                                 <ul class="list-unstyled products-list">
-                                    {% for product in q.products.all %}
+                                    {% for product in q.products.all|slice:":5" %}
                                         <li>
                                             <a href="{% url "control:event.product" organizer=request.event.organizer.slug event=request.event.slug product=product.id %}">{{ product }}</a>
                                         </li>
                                     {% empty %}
                                         <li class="text-muted">{% translate "All products" %}</li>
                                     {% endfor %}
+                                    {% if q.products.count > 5 %}
+                                        <li class="text-muted">+{{ q.products.count|add:"-5" }} {% translate "more" %}</li>
+                                    {% endif %}
                                 </ul>
                             </td>
                             <td class="dnd-container text-center text-nowrap">

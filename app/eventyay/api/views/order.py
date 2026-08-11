@@ -29,6 +29,7 @@ from rest_framework.response import Response
 
 from eventyay.api.models import OAuthAccessToken
 from eventyay.api.serializers.order import (
+    CheckinListOrderPositionSerializer,
     InvoiceSerializer,
     OrderCreateSerializer,
     OrderPaymentCreateSerializer,
@@ -96,6 +97,7 @@ from eventyay.base.signals import (
 )
 from eventyay.base.templatetags.money import money_filter
 from eventyay.control.signals import order_search_filter_q
+
 
 with scopes_disabled():
 
@@ -364,7 +366,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                     count_waitinglist=False,
                 )
             except Quota.QuotaExceededException as e:
-                return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+                raise QuotaExceededAPIException(str(e))
             except PaymentException as e:
                 return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
             except SendMailException:
@@ -439,7 +441,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 send_mail=send_mail,
             )
         except Quota.QuotaExceededException as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            raise QuotaExceededAPIException(str(e))
         except OrderError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return self.retrieve(request, [], **kwargs)
@@ -1077,11 +1079,15 @@ class OrderPositionViewSet(mixins.DestroyModelMixin, mixins.UpdateModelMixin, vi
     def download(self, request, output, **kwargs):
         provider = self._get_output_provider(output)
         pos = self.get_object()
+        badge_download = (
+            output == 'badge' and 'eventyay.plugins.badges' in self.request.event.plugins
+        )
 
-        if pos.order.status != Order.STATUS_PAID:
-            raise PermissionDenied('Downloads are not available for unpaid orders.')
-        if not pos.generate_ticket:
-            raise PermissionDenied('Downloads are not enabled for this product.')
+        if not badge_download:
+            if pos.order.status != Order.STATUS_PAID:
+                raise PermissionDenied('Downloads are not available for unpaid orders.')
+            if not pos.generate_ticket:
+                raise PermissionDenied('Downloads are not enabled for this product.')
 
         ct = CachedTicket.objects.filter(order_position=pos, provider=provider.identifier, file__isnull=False).last()
         if not ct or not ct.file:
@@ -1114,7 +1120,7 @@ class OrderPositionViewSet(mixins.DestroyModelMixin, mixins.UpdateModelMixin, vi
         except OrderError as e:
             raise ValidationError(str(e))
         except Quota.QuotaExceededException as e:
-            raise ValidationError(str(e))
+            raise QuotaExceededAPIException(str(e))
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.get('partial', False)
@@ -1123,6 +1129,47 @@ class OrderPositionViewSet(mixins.DestroyModelMixin, mixins.UpdateModelMixin, vi
                 {'detail': 'Method "PUT" not allowed.'},
                 status=status.HTTP_405_METHOD_NOT_ALLOWED,
             )
+        if 'badge_hidden_fields' in request.data or 'badge_field_overrides' in request.data:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            from eventyay.plugins.badges.utils import (
+                get_badge_field_overrides,
+                get_badge_hidden_fields,
+                save_badge_customization,
+                validate_badge_field_overrides,
+                validate_badge_hidden_fields,
+            )
+
+            op = self.get_object()
+            try:
+                hidden_fields = (
+                    validate_badge_hidden_fields(
+                        op.order.event,
+                        op,
+                        request.data.get('badge_hidden_fields'),
+                    )
+                    if 'badge_hidden_fields' in request.data
+                    else get_badge_hidden_fields(op)
+                )
+                field_overrides = (
+                    validate_badge_field_overrides(
+                        op.order.event,
+                        op,
+                        request.data.get('badge_field_overrides'),
+                    )
+                    if 'badge_field_overrides' in request.data
+                    else get_badge_field_overrides(op)
+                )
+            except DjangoValidationError as exc:
+                raise ValidationError(exc.messages)
+
+            save_badge_customization(
+                op,
+                hidden_fields=hidden_fields if 'badge_hidden_fields' in request.data else None,
+                field_overrides=field_overrides if 'badge_field_overrides' in request.data else None,
+            )
+            serializer = CheckinListOrderPositionSerializer(op, context=self.get_serializer_context())
+            return Response(serializer.data)
         return super().update(request, *args, **kwargs)
 
     def perform_update(self, serializer):
@@ -1155,6 +1202,10 @@ class OrderPositionViewSet(mixins.DestroyModelMixin, mixins.UpdateModelMixin, vi
         order_modified.send(sender=serializer.instance.order.event, order=serializer.instance.order)
 
 
+def get_order_for_nested_route(request, order_pk):
+    return get_object_or_404(Order, pk=order_pk, event=request.event)
+
+
 class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     serializer_class = OrderPaymentSerializer
     queryset = OrderPayment.objects.none()
@@ -1164,12 +1215,12 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        ctx['order'] = get_object_or_404(Order, code=self.kwargs['order'], event=self.request.event)
+        ctx['order'] = get_order_for_nested_route(self.request, self.kwargs['order'])
         ctx['event'] = self.request.event
         return ctx
 
     def get_queryset(self):
-        order = get_object_or_404(Order, code=self.kwargs['order'], event=self.request.event)
+        order = get_order_for_nested_route(self.request, self.kwargs['order'])
         return order.payments.all()
 
     def create(self, request, *args, **kwargs):
@@ -1192,8 +1243,8 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
                         force=request.data.get('force', False),
                         send_mail=send_mail,
                     )
-                except Quota.QuotaExceededException:
-                    pass
+                except Quota.QuotaExceededException as e:
+                    raise QuotaExceededAPIException(str(e))
                 except SendMailException:
                     pass
 
@@ -1239,7 +1290,7 @@ class PaymentViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
                 force=force,
             )
         except Quota.QuotaExceededException as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            raise QuotaExceededAPIException(str(e))
         except PaymentException as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except SendMailException:
@@ -1373,7 +1424,7 @@ class RefundViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
     lookup_field = 'local_id'
 
     def get_queryset(self):
-        order = get_object_or_404(Order, code=self.kwargs['order'], event=self.request.event)
+        order = get_order_for_nested_route(self.request, self.kwargs['order'])
         return order.refunds.all()
 
     @action(detail=True, methods=['POST'])
@@ -1460,7 +1511,7 @@ class RefundViewSet(CreateModelMixin, viewsets.ReadOnlyModelViewSet):
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
-        ctx['order'] = get_object_or_404(Order, code=self.kwargs['order'], event=self.request.event)
+        ctx['order'] = get_order_for_nested_route(self.request, self.kwargs['order'])
         return ctx
 
     def create(self, request, *args, **kwargs):
@@ -1534,6 +1585,12 @@ class RetryException(APIException):
     status_code = 409
     default_detail = 'The requested resource is not ready, please retry later.'
     default_code = 'retry_later'
+
+
+class QuotaExceededAPIException(APIException):
+    status_code = 409
+    default_detail = 'Quota exceeded.'
+    default_code = 'QUOTA_EXCEEDED'
 
 
 class InvoiceViewSet(viewsets.ReadOnlyModelViewSet):

@@ -7,8 +7,8 @@ from django.core.validators import MinValueValidator
 from django.utils.translation import gettext_lazy as _
 from i18nfield.forms import I18nFormField, I18nTextarea, I18nTextInput
 
-from eventyay.base.forms import SecretKeySettingsField, SettingsForm
-from eventyay.base.settings import EVENT_SERIES_CREATION_ENABLED, GlobalSettingsObject
+from eventyay.base.forms import SecretKeySettingsField, SecretKeySettingsWidget, SettingsForm
+from eventyay.base.settings import EVENT_SERIES_CREATION_ENABLED, MEETUP_CREATION_ENABLED, GlobalSettingsObject
 from eventyay.base.signals import register_global_settings
 
 
@@ -24,6 +24,12 @@ class GlobalSettingsForm(SettingsForm):
             global_settings.set('billing_validation', True)
         if global_settings.get(EVENT_SERIES_CREATION_ENABLED) is None:
             global_settings.set(EVENT_SERIES_CREATION_ENABLED, True)
+        if global_settings.get(MEETUP_CREATION_ENABLED) is None:
+            global_settings.set(MEETUP_CREATION_ENABLED, False)
+        if global_settings.get('reservation_time') is None or global_settings.get('reservation_time') == '':
+            global_settings.set('reservation_time', 30)
+        if global_settings.get('max_products_per_order') is None or global_settings.get('max_products_per_order') == '':
+            global_settings.set('max_products_per_order', 0)
         if global_settings.get('smtp_port') is None or global_settings.get('smtp_port') == '':
             self.obj.settings.set('smtp_port', settings.EMAIL_PORT)
         if global_settings.get('smtp_host') is None or global_settings.get('smtp_host') == '':
@@ -71,6 +77,18 @@ class GlobalSettingsForm(SettingsForm):
                         ),
                     ),
                 ),
+                (
+                    MEETUP_CREATION_ENABLED,
+                    forms.BooleanField(
+                        required=False,
+                        label=_('Allow meetup creation'),
+                        help_text=_(
+                            'When enabled, organizers can create simplified meetup events in addition to standard events. '
+                            'Disable this to restrict event creation to standard events only.'
+                        ),
+                    ),
+                ),
+
                 (
                     'footer_text',
                     I18nFormField(
@@ -204,10 +222,10 @@ class GlobalSettingsForm(SettingsForm):
                 ),
                 (
                     'smtp_password',
-                    forms.CharField(
+                    SecretKeySettingsField(
                         label=_('Password'),
                         required=False,
-                        widget=forms.PasswordInput(
+                        widget=SecretKeySettingsWidget(
                             attrs={
                                 'autocomplete': 'new-password',  # see https://bugs.chromium.org/p/chromium/issues/detail?id=370363#c7
                                 'data-display-dependency': '#id_email_vendor_1',
@@ -425,6 +443,62 @@ class GlobalSettingsForm(SettingsForm):
                         required=False,
                     ),
                 ),
+                # Etherpad collaborative notes
+                (
+                    'etherpad_enabled',
+                    forms.BooleanField(
+                        label=_('Enable Etherpad integration'),
+                        help_text=_('Allow events to attach collaborative Etherpad notes to their sessions.'),
+                        required=False,
+                    ),
+                ),
+                (
+                    'etherpad_base_url',
+                    forms.URLField(
+                        label=_('Default Etherpad instance URL'),
+                        help_text=_('Base URL of the Etherpad instance, e.g. {sample}').format(sample='https://pad.example.org'),
+                        required=False,
+                    ),
+                ),
+                (
+                    'etherpad_api_key',
+                    SecretKeySettingsField(
+                        label=_('Etherpad API key'),
+                        help_text=_(
+                            'API key of the Etherpad instance (found in APIKEY.txt). Required only for automatic pad '
+                            'creation; without it, pad links are generated as plain URLs that Etherpad creates on first visit.'
+                        ),
+                        required=False,
+                    ),
+                ),
+                (
+                    'etherpad_pad_name_pattern',
+                    forms.CharField(
+                        label=_('Pad name pattern'),
+                        help_text=_(
+                            'Pattern used to generate pad names. Available placeholders: {placeholders}.'
+                        ).format(placeholders='{event}, {submission}, {token}'),
+                        required=False,
+                    ),
+                ),
+                (
+                    'reservation_time',
+                    forms.IntegerField(
+                        label=_('Reservation period'),
+                        help_text=_("The number of minutes the items in a user's cart are reserved for this user."),
+                        min_value=0,
+                        required=True,
+                    ),
+                ),
+                (
+                    'max_products_per_order',
+                    forms.IntegerField(
+                        label=_('Maximum number of items per order'),
+                        help_text=_('Add-on products will be excluded from the count. Set to 0 for unlimited.'),
+                        min_value=0,
+                        required=True,
+                    ),
+                ),
             ]
         )
 
@@ -463,6 +537,10 @@ class GlobalSettingsForm(SettingsForm):
                 'payment_paypal_connect_secret_key',
                 'payment_paypal_connect_endpoint',
             ]),
+            ('cart', _('Cart'), [
+                'reservation_time',
+                'max_products_per_order',
+            ]),
             ('ticket_fee', _('Ticket fee'), [
                 'ticket_fee_percentage',
             ]),
@@ -478,8 +556,23 @@ class GlobalSettingsForm(SettingsForm):
             ]),
             ('event_creation', _('Event Creation'), [
                 EVENT_SERIES_CREATION_ENABLED,
+                MEETUP_CREATION_ENABLED,
+            ]),
+            ('etherpad', _('Etherpad'), [
+                'etherpad_enabled',
+                'etherpad_base_url',
+                'etherpad_api_key',
+                'etherpad_pad_name_pattern',
             ]),
         ]
+
+    def clean_etherpad_pad_name_pattern(self):
+        pattern = (self.cleaned_data.get('etherpad_pad_name_pattern') or '').strip()
+        if pattern and '{submission}' not in pattern and '{token}' not in pattern:
+            raise forms.ValidationError(
+                _('The pattern must contain {submission} or {token} so each session gets a unique pad.')
+            )
+        return pattern
 
     def clean(self):
         data = super().clean()
@@ -488,6 +581,8 @@ class GlobalSettingsForm(SettingsForm):
         if data.get('email_vendor') == 'sendgrid':
             if not data.get('send_grid_api_key'):
                 raise forms.ValidationError({'send_grid_api_key': _('This field is required when using SendGrid as email vendor.')})
+
+
 
         return data
 

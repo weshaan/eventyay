@@ -1,11 +1,11 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from itertools import groupby
 
 from django.conf import settings
-from django.db.models import Exists, OuterRef, Prefetch, Sum
+from django.db.models import Count, Exists, OuterRef, Prefetch, Sum, Value
 from django.utils.functional import cached_property
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
@@ -14,6 +14,8 @@ from eventyay.base.i18n import language
 from eventyay.base.models import (
     CartPosition,
     InvoiceAddress,
+    Organizer,
+    OrganizerFollower,
     ProductAddOn,
     OrderPosition,
     Question,
@@ -28,7 +30,8 @@ from eventyay.base.services.system_questions import (
 )
 from eventyay.helpers.cookies import set_cookie_without_samesite
 from eventyay.multidomain.urlreverse import eventreverse
-from eventyay.presale.signals import question_form_fields
+from eventyay.presale.organizer_exports import build_organizer_calendar_exporters
+from eventyay.presale.utils import build_position_additional_fields
 
 
 def cached_invoice_address(request):
@@ -114,20 +117,7 @@ class CartMixin:
         pos_additional_fields = defaultdict(list)
         for cp in lcp:
             cp.product.event = self.request.event  # will save some SQL queries
-            responses = question_form_fields.send(sender=self.request.event, position=cp)
-            data = cp.meta_info_data
-            for r, response in sorted(responses, key=lambda r: str(r[0])):
-                if response:
-                    for key, value in response.items():
-                        answer = data.get('question_form_data', {}).get(key)
-                        if hasattr(value, 'get_display_value'):
-                            answer = value.get_display_value(answer)
-                        pos_additional_fields[cp.pk].append(
-                            {
-                                'answer': answer,
-                                'question': value.label,
-                            }
-                        )
+            pos_additional_fields[cp.pk] = build_position_additional_fields(self.request.event, cp)
 
         base_states = get_system_question_base_states(self.request.event)
         product_overrides = get_system_question_product_overrides(self.request.event)
@@ -418,6 +408,25 @@ class OrganizerViewMixin:
         if style not in ('list', 'week', 'calendar'):
             style = 'list'
         context['organizer_view_style'] = style
+        context['organizer_calendar_exporters'] = build_organizer_calendar_exporters(self.request)
+
+        organizer = self.request.organizer
+        context['follow_enabled'] = organizer.settings.get('community_follow_enabled', as_type=bool, default=True)
+        context['show_follower_count'] = organizer.settings.get('community_show_follower_count', as_type=bool, default=True)
+
+        qs = Organizer.objects.filter(pk=organizer.pk).annotate(
+            follower_count=Count('followers')
+        )
+        if self.request.user.is_authenticated:
+            qs = qs.annotate(
+                is_following=Exists(OrganizerFollower.objects.filter(organizer=OuterRef('pk'), user=self.request.user))
+            )
+        else:
+            qs = qs.annotate(is_following=Value(False))
+        org_data = qs.values('follower_count', 'is_following').first()
+        context['follower_count'] = org_data['follower_count'] if org_data else 0
+        context['is_following'] = org_data['is_following'] if org_data else False
+
         return context
 
 
@@ -470,7 +479,7 @@ def iframe_entry_view_wrapper(view_func):
                 settings.LANGUAGE_COOKIE_NAME,
                 locale,
                 max_age=max_age,
-                expires=(datetime.utcnow() + timedelta(seconds=max_age)).strftime('%a, %d-%b-%Y %H:%M:%S GMT'),
+                expires=(datetime.now(timezone.utc) + timedelta(seconds=max_age)).strftime('%a, %d-%b-%Y %H:%M:%S GMT'),
                 domain=settings.SESSION_COOKIE_DOMAIN,
             )
             return resp

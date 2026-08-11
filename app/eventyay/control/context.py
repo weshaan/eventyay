@@ -7,6 +7,7 @@ from django.urls import Resolver404, get_script_prefix, resolve
 from django.utils.translation import get_language
 from django_scopes import scope
 
+from eventyay.base.meetup import is_meetup_event
 from eventyay.base.models.auth import StaffSession
 from eventyay.base.models.page import Page
 from eventyay.base.settings import GlobalSettingsObject
@@ -25,6 +26,7 @@ from ..helpers.i18n import (
 from ..helpers.plugin_enable import is_video_enabled
 from ..multidomain.urlreverse import get_event_domain
 from .signals import html_head, nav_topbar
+from eventyay.eventyay_common.permissions import get_cached_event_dashboard_access
 
 SessionStore = import_module(settings.SESSION_ENGINE).SessionStore
 
@@ -62,8 +64,14 @@ def _default_context(request):
         for receiver, response in html_head.send(request.event, request=request):
             _html_head.append(response)
         from django.urls import reverse
-
-        ctx['talk_edit_url'] = reverse('orga:event.dashboard', kwargs={'event': request.event.slug})
+        is_meetup = is_meetup_event(request.event)
+        ctx['is_meetup'] = is_meetup
+        ctx['is_meetup_event'] = is_meetup
+        ctx['talk_edit_url'] = reverse(
+            'orga:event.dashboard',
+            kwargs={'organizer': request.event.organizer.slug,
+                    'event': request.event.slug},
+        )
         ctx['is_video_enabled'] = is_video_enabled(request.event)
         ctx['is_talk_event_created'] = False
         if (
@@ -76,6 +84,13 @@ def _default_context(request):
     _js_payment_weekdays_disabled = '[]'
     if getattr(request, 'event', None) and hasattr(request, 'organizer') and request.user.is_authenticated:
         ctx['nav_items'] = get_event_navigation(request)
+
+        access = get_cached_event_dashboard_access(
+            request, request.user, request.organizer, request.event
+        )
+        ctx['has_ticket_access'] = access['has_ticket_access']
+        ctx['has_talk_access'] = access['has_talk_access']
+        ctx['has_video_access'] = access['has_video_access']
 
         if request.event.settings.get('payment_term_weekdays'):
             _js_payment_weekdays_disabled = '[0,6]'

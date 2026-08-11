@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 from pathlib import Path
 
 from django.core.files import File
@@ -14,6 +15,7 @@ from django.forms import (
     TimeInput,
     Widget,
 )
+from i18nfield.forms import I18nTextarea
 from django.utils.datastructures import MultiValueDict
 from django.utils.safestring import mark_safe
 from django.utils.translation import gettext_lazy as _
@@ -98,6 +100,13 @@ class ClearableBasenameFileInput(ClearableFileInput):
 class ImageInput(ClearableBasenameFileInput):
     template_name = 'common/widgets/image_input.html'
 
+    def get_context(self, name, value, attrs):
+        ctx = super().get_context(name, value, attrs)
+        widget_attrs = ctx['widget'].get('attrs') or {}
+        alt = widget_attrs.pop('alt', None) or (self.attrs or {}).get('alt') or _('Image preview')
+        ctx['widget']['alt_text'] = alt
+        return ctx
+
 
 class MarkdownWidget(Textarea):
     template_name = 'common/widgets/markdown.html'
@@ -106,6 +115,78 @@ class MarkdownWidget(Textarea):
         attrs = attrs.copy() if attrs is not None else {}
         attrs.setdefault('data-markdown-field', 'true')
         super().__init__(attrs=attrs)
+
+
+class RichTextWidget(Textarea):
+    """Tiptap-enhanced textarea for simple rich text editing.
+
+    Renders a plain ``<textarea>`` wrapped in a ``[data-tiptap-wrapper]``
+    container.  The ``tiptapLoader.js`` loader on the page detects the
+    ``data-tiptap-profile`` attribute and progressively enhances the field
+    with a Tiptap editor (bold, italic, underline, lists, link).
+
+    Falls back gracefully to a plain textarea when JavaScript is disabled
+    or the bundle has not loaded yet.
+    """
+
+    template_name = 'common/widgets/richtext.html'
+
+    def __init__(self, attrs=None):
+        attrs = attrs.copy() if attrs is not None else {}
+        attrs.setdefault('data-tiptap-profile', 'richtext')
+        super().__init__(attrs=attrs)
+
+
+class I18nEmailEditorWidget(I18nTextarea):
+    """Tiptap email editor for i18n message fields in the Message center.
+
+    Wraps each locale textarea in a ``[data-tiptap-wrapper]`` container so the
+    shared editor bundle can mount one editor per language tab.
+    """
+
+    def __init__(self, locales, field, attrs=None, placeholders=None, preview_url='', **kwargs):
+        attrs = attrs.copy() if attrs is not None else {}
+        attrs.setdefault('data-tiptap-profile', 'email')
+        if placeholders:
+            attrs['data-tiptap-placeholders'] = json.dumps(list(placeholders))
+        if preview_url:
+            attrs['data-tiptap-preview-url'] = preview_url
+        super().__init__(locales=locales, field=field, attrs=attrs)
+
+    def format_output(self, rendered_widgets, id_):
+        wrapped = [
+            f'<div class="tiptap-wrapper" data-tiptap-wrapper="true" data-email-editor="true">{widget}</div>'
+            for widget in rendered_widgets
+        ]
+        return super().format_output(wrapped, id_)
+
+
+class EmailEditorWidget(Textarea):
+    """Tiptap-enhanced textarea for email body editing.
+
+    Extends the richtext profile with a placeholder variable insertion
+    menu and an optional preview button.  Available placeholder variable
+    names are passed via ``data-tiptap-placeholders`` as a JSON array so
+    the JS bundle can render the insertion dropdown without a server round-trip.
+
+    Args:
+        placeholders: Sequence of placeholder variable names to expose in
+            the insertion menu, e.g. ``['attendee_name', 'event_name']``.
+        preview_url: Optional URL for the email preview AJAX endpoint.
+    """
+
+    template_name = 'common/widgets/email_editor.html'
+
+    def __init__(self, attrs=None, placeholders=None, preview_url=''):
+        attrs = attrs.copy() if attrs is not None else {}
+        attrs.setdefault('data-tiptap-profile', 'email')
+        if placeholders:
+            attrs['data-tiptap-placeholders'] = json.dumps(list(placeholders))
+        if preview_url:
+            attrs['data-tiptap-preview-url'] = preview_url
+        super().__init__(attrs=attrs)
+        self.placeholders = list(placeholders) if placeholders else []
+        self.preview_url = preview_url
 
 
 class EnhancedSelectMixin(Select):
@@ -219,6 +300,7 @@ class SlidesWidget(Widget):
     def __init__(self, attrs=None):
         super().__init__(attrs)
         self.max_items = None
+        self.max_size = None
 
     @staticmethod
     def links_field_name(name):
@@ -231,14 +313,21 @@ class SlidesWidget(Widget):
     def get_context(self, name, value, attrs):
         context = super().get_context(name, value, attrs)
         if isinstance(value, dict):
-            current_resources = list(value.get('existing_resources', []))
-            links_value = '\n'.join(value.get('links', []))
+            if 'existing_resources' in value or 'links' in value:
+                # Value came from InfoForm.__init__ setting initial from DB resources
+                current_resources = list(value.get('existing_resources', []))
+                links_value = '\n'.join(value.get('links', []))
+            else:
+                # Raw dict from value_from_datadict (POST submission, possibly invalid form re-render)
+                current_resources = []
+                links_value = value.get('links_text', '')
         else:
             current_resources = list(value or [])
             links_value = ''
         context['widget']['current_resources'] = current_resources
         context['widget']['existing_value'] = bool(current_resources)
         context['widget']['max_items'] = self.max_items
+        context['widget']['max_size'] = self.max_size
         context['widget']['current_count'] = len(current_resources)
         context['widget']['remaining_items'] = (
             max(self.max_items - len(current_resources), 0) if self.max_items else None
@@ -249,6 +338,7 @@ class SlidesWidget(Widget):
         context['widget']['files_id'] = f'id_{self.files_field_name(name)}'
         context['widget']['clear_name'] = self.clear_checkbox_name(name)
         context['widget']['links_value'] = links_value
+        context['widget']['is_re_render'] = isinstance(value, dict) and 'existing_resources' not in value and 'links' not in value
         return context
 
     @staticmethod

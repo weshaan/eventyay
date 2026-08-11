@@ -1,7 +1,6 @@
 {% extends "eventyay_common/event/settings_base.html" %}
-{% load i18n %}
+{% load i18n static %}
 {% load bootstrap3 %}
-{% load static %}
 {% load hierarkey_form %}
 {% load formset_tags %}
 {% load presale_locale %}
@@ -9,8 +8,14 @@
 {% block custom_header %}
 {{ block.super }}
 <link type="text/css" rel="stylesheet" href='{% url "control:pdf.css" %}'>
-<script defer src="{% static 'eventyay-common/js/event-image-source.js' %}"></script>
+<link type="text/css" rel="stylesheet" href="{% static 'vendored/cropperjs/cropper.min.css' %}">
+<script defer src="{% static 'eventyay-common/js/smtp-toggle.js' %}"></script>
+<script defer src="{% static 'eventyay-common/js/contact-form-toggle.js' %}"></script>
+<script type="module" src="{% static 'pretixcontrol/js/ui/secret-toggle.js' %}"></script>
 {{ sform.media }}
+{% if is_meetup_event %}
+<script type="module" src="{% static 'eventyay-common/js/ui/meetup-video-fields.js' %}"></script>
+{% endif %}
 {% endblock %}
 {% block inside %}
 <nav id="event-nav" class="header-nav">
@@ -19,20 +24,22 @@
             <h1>{{ request.event.name|event_localize }} {% trans "- Settings" %}</h1>
         </div>
         <div class="navigation-button">
-            <a href="{% url 'eventyay_common:event.index' organizer=request.organizer.slug event=request.event.slug %}" class="header-nav btn btn-outline-success active">
+            <a href="{% url 'eventyay_common:event.index' organizer=request.event.organizer.slug event=request.event.slug %}"
+                class="header-nav btn btn-outline-success active">
                 <i class="fa fa-home"></i> {% trans "Home" %}
             </a>
-            <a href='{% url "control:event.index" organizer=request.organizer.slug event=request.event.slug %}'
+            <a href='{% url "control:event.index" organizer=request.event.organizer.slug event=request.event.slug %}'
                 class="header-nav btn btn-outline-success">
                 <i class="fa fa-ticket"></i> {% trans "Tickets" %}
             </a>
-            {% if is_talk_event_created %}
-            <a href='{% url "orga:event.dashboard" event=request.event.slug %}' class="header-nav btn btn-outline-success">
+            {% if is_talk_event_created and not is_meetup_event %}
+            <a href='{% url "orga:event.dashboard" organizer=request.event.organizer.slug event=request.event.slug %}'
+                class="header-nav btn btn-outline-success">
                 <i class="fa fa-group"></i> {% trans "Talks" %}
             </a>
             {% endif %}
             <a class="header-nav btn btn-outline-success"
-                href='{% url "eventyay_common:event.create_access_to_video" organizer=request.organizer.slug event=request.event.slug %}'
+                href='{% url "eventyay_common:event.create_access_to_video" organizer=request.event.organizer.slug event=request.event.slug %}'
                 title="{% trans 'Access videos related to this event' %}">
                 <i class="fa fa-video-camera"></i> {% trans "Videos" %}
             </a>
@@ -42,7 +49,8 @@
 <form action="" method="post" class="form-horizontal" enctype="multipart/form-data">
     {% csrf_token %}
     {% bootstrap_form_errors form %}
-    {% bootstrap_form_errors sform %} {# Added to show sform errors #}
+    {% bootstrap_form_errors sform %}
+    {% bootstrap_form_errors email_form %}
     {% comment %} TODO: Reintroduce component selection when unified component initialization is stable. {% endcomment %}
     <div class="tabbed-form">
         <fieldset>
@@ -52,12 +60,9 @@
             {% if form.domain %} {# Conditionally show if domain field is added to form #}
             {% bootstrap_field form.domain layout="control" %}
             {% endif %}
-            {% bootstrap_field form.date_from layout="control" %}
-            {% bootstrap_field form.date_to layout="control" %}
+            {% include "eventyay_common/includes/event_schedule_row.html" with date_from_form=form.date_from date_to_form=form.date_to timezone_form=sform.timezone %}
             {% bootstrap_field form.date_admission layout="control" %}
             {% include "pretixcontrol/event/fragment_geodata.html" %}
-            {% bootstrap_field form.email layout="control" %}
-            {% bootstrap_field sform.imprint_url layout="control" %}
             <div class="form-group">
                 <label class="col-md-3 control-label">
                     {% translate "Header links" %}
@@ -65,10 +70,10 @@
                 <div class="col-md-9">
                     <div class="help-block text-muted">
                         {% blocktranslate trimmed %}
-                            These links will be shown at the top of all your schedule-related pages, e.g.
-                            the schedule itself, speaker pages, session pages, etc.
-                            You could for example link to your home page, your registration page, or your
-                            livestream here.
+                        These links will be shown at the top of all your schedule-related pages, e.g.
+                        the schedule itself, speaker pages, session pages, etc.
+                        You could for example link to your home page, your registration page, or your
+                        livestream here.
                         {% endblocktranslate %}
                     </div>
                     {% include "orga/includes/event_links_formset.html" with formset=header_links_formset %}
@@ -82,14 +87,52 @@
                 <div class="col-md-9">
                     <div class="help-block text-muted">
                         {% blocktranslate trimmed %}
-                            These links will be shown in the footer of all your public pages. You could
-                            for example link your terms of service, imprint, or privacy policy here.
+                        These links will be shown in the footer of all your public pages. You could
+                        for example link your terms of service, imprint, or privacy policy here.
                         {% endblocktranslate %}
                     </div>
                     {% include "orga/includes/event_links_formset.html" with formset=footer_links_formset %}
+
+                    <div class="settings-footer-contact">
+                        <div class="checkbox settings-footer-contact-toggle">
+                            <label>
+                                {{ sform.contact_form_enabled }}
+                                <strong>{% translate "Contact form" %}</strong>
+                            </label>
+                        </div>
+                        {% if sform.contact_form_enabled.errors %}
+                            <div class="help-block">
+                                {% for error in sform.contact_form_enabled.errors %}
+                                    <span class="text-danger">{{ error }}</span>
+                                {% endfor %}
+                            </div>
+                        {% endif %}
+
+                        <div id="contact-form-email-fields"
+                             class="settings-footer-contact-fields{% if sform.contact_mail.errors %} has-error{% endif %}">
+                            <label class="control-label" for="{{ sform.contact_mail.id_for_label }}">
+                                {% translate "Organizer email address" %}
+                            </label>
+                            <input type="email"
+                                   name="{{ sform.contact_mail.html_name }}"
+                                   value="{{ sform.contact_mail.value|default:'' }}"
+                                   class="form-control"
+                                   id="{{ sform.contact_mail.id_for_label }}"
+                                   {% if sform.contact_mail.field.disabled %}disabled{% endif %}>
+                            {% if sform.contact_mail.help_text %}
+                                <p class="help-block text-muted">{{ sform.contact_mail.help_text }}</p>
+                            {% endif %}
+                            {% if sform.contact_mail.errors %}
+                                <div class="help-block text-danger">
+                                    {% for error in sform.contact_mail.errors %}
+                                        <span>{{ error }}</span>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
                 </div>
             </div>
-            {% bootstrap_field form.is_public layout="control" %}
             {% comment %}
             <div class="setting-part">
                 <div class="form-group setting-form">
@@ -99,11 +142,11 @@
                             data-target="#alert-modal-disabled">
                             {% trans "Enabled" %}
                         </button>
-                        <a href='{% url "control:event.index" organizer=request.organizer.slug event=request.event.slug %}'
+                        <a href='{% url "control:event.index" organizer=request.event.organizer.slug event=request.event.slug %}'
                             class="btn btn-sm btn-default" title='{% trans "Dashboard" %}' data-toggle="tooltip">
                             <span class="fa fa-dashboard"></span>
                         </a>
-                        <a href='{% url "control:event.settings" organizer=request.organizer.slug event=request.event.slug %}'
+                        <a href='{% url "control:event.settings" organizer=request.event.organizer.slug event=request.event.slug %}'
                             class="btn btn-sm btn-default" title='{% trans "Setting" %}' data-toggle="tooltip">
                             <span class="fa fa-edit"></span>
                         </a>
@@ -117,12 +160,12 @@
                             data-target="#alert-modal-disabled">
                             {% trans "Enabled" %}
                         </button>
-                        <a href='{% url "orga:event.dashboard" event=request.event.slug %}' class="btn btn-sm btn-default"
-                            title='{% trans "Dashboard" %}' data-toggle="tooltip">
+                        <a href='{% url "orga:event.dashboard" organizer=request.event.organizer.slug event=request.event.slug %}'
+                            class="btn btn-sm btn-default" title='{% trans "Dashboard" %}' data-toggle="tooltip">
                             <span class="fa fa-dashboard"></span>
                         </a>
-                        <a href='{% url "orga:settings.event.view" event=request.event.slug %}' class="btn btn-sm btn-default"
-                            title='{% trans "Settings" %}' data-toggle="tooltip">
+                        <a href='{% url "orga:settings.event.view" organizer=request.event.organizer.slug event=request.event.slug %}'
+                            class="btn btn-sm btn-default" title='{% trans "Settings" %}' data-toggle="tooltip">
                             <span class="fa fa-edit"></span>
                         </a>
                         {% else %}
@@ -141,7 +184,7 @@
                             data-target="#alert-modal-disabled">
                             {% trans "Enabled" %}
                         </button>
-                        <a href='{% url "eventyay_common:event.create_access_to_video" organizer=request.organizer.slug event=request.event.slug %}'
+                        <a href='{% url "eventyay_common:event.create_access_to_video" organizer=request.event.organizer.slug event=request.event.slug %}'
                             class="btn btn-sm btn-default" title='{% trans "Video Configuration" %}'
                             data-toggle="tooltip">
                             <span class="fa fa-edit"></span>
@@ -157,11 +200,21 @@
             </div>
             {% endcomment %}
         </fieldset>
+
+        {% if is_meetup_event %}
+        <fieldset>
+            <legend>{% trans "Video stream" %}</legend>
+            {% bootstrap_field sform.video_type layout="control" %}
+            <div id="video-url-group" {% if not sform.video_type.value %}hidden{% endif %}>
+                {% bootstrap_field sform.video_url layout="control" %}
+            </div>
+        </fieldset>
+        {% endif %}
+
         <fieldset>
             <legend>{% trans "Localization" %}</legend>
             {% bootstrap_field sform.locales layout="control" %}
             {% bootstrap_field sform.locale layout="control" %}
-            {% bootstrap_field sform.timezone layout="control" %}
             {% bootstrap_field sform.region layout="control" %}
         </fieldset>
         <fieldset>
@@ -172,58 +225,109 @@
         </fieldset>
         <fieldset>
             <legend>{{ _('Design') }}</legend>
-            <div
-                data-image-source-pair
-                data-file-input-id="{{ sform.event_logo_image.id_for_label }}"
-                data-url-input-id="{{ sform.event_logo_image_url.id_for_label }}"
-                data-has-current-file="{{ sform.image_source_states.event_logo_image.has_uploaded_file|yesno:'true,false' }}"
-            >
-                {% bootstrap_field sform.event_logo_image layout="control" %}
-                {% bootstrap_field sform.event_logo_image_url layout="control" %}
-                <div class="form-group" data-image-url-preview hidden>
-                    <label class="col-md-3 control-label">{% trans "Logo preview" %}</label>
-                    <div class="col-md-9">
-                        <a data-image-url-preview-link href="" target="_blank" rel="noopener noreferrer">
-                            <img loading="lazy" data-image-url-preview-image class="img-responsive img-thumbnail" alt="{% trans 'Logo preview' %}" hidden>
-                        </a>
-                        <p class="help-block text-danger" data-image-url-preview-error hidden>{% trans "We could not load this image preview." %}</p>
-                    </div>
-                </div>
-            </div>
+            {% bootstrap_field sform.event_logo_image layout="control" %}
             {% bootstrap_field sform.logo_show_title layout="control" %}
-            <div
-                data-image-source-pair
-                data-file-input-id="{{ sform.logo_image.id_for_label }}"
-                data-url-input-id="{{ sform.logo_image_url.id_for_label }}"
-                data-has-current-file="{{ sform.image_source_states.logo_image.has_uploaded_file|yesno:'true,false' }}"
-            >
-                {% bootstrap_field sform.logo_image layout="control" %}
-                {% bootstrap_field sform.logo_image_url layout="control" %}
-                <div class="form-group" data-image-url-preview hidden>
-                    <label class="col-md-3 control-label">{% trans "Header image preview" %}</label>
-                    <div class="col-md-9">
-                        <a data-image-url-preview-link href="" target="_blank" rel="noopener noreferrer">
-                            <img loading="lazy" data-image-url-preview-image class="img-responsive img-thumbnail" alt="{% trans 'Header image preview' %}" hidden>
-                        </a>
-                        <p class="help-block text-danger" data-image-url-preview-error hidden>{% trans "We could not load this image preview." %}</p>
-                    </div>
-                </div>
-            </div>
+            {% bootstrap_field sform.logo_image layout="control" %}
+            {% bootstrap_field sform.event_preview_image layout="control" %}
             {% bootstrap_field sform.logo_image_large layout="control" %}
             {% bootstrap_field sform.og_image layout="control" %}
             {% url "eventyay_common:organizer.edit" organizer=request.organizer.slug as org_url %}
-            {% propagated request.event org_url "primary_color" "header_background_color" "header_text_color" "navigation_text_color" "primary_font" "theme_color_success" "theme_color_danger" %}
+            {% propagated request.event org_url "primary_color" "header_background_color" "header_text_color" "navigation_text_color" "menu_text_scroll_over_color" "primary_font" "theme_color_success" "theme_color_danger" "theme_color_background" "hover_button_color" "video_navigation_background_color" "video_sidebar_text_color" "video_sidebar_hover_color" %}
             {% bootstrap_field sform.primary_color layout="control" %}
             {% bootstrap_field sform.header_background_color layout="control" %}
             {% bootstrap_field sform.header_text_color layout="control" %}
             {% bootstrap_field sform.navigation_text_color layout="control" %}
+            {% bootstrap_field sform.menu_text_scroll_over_color layout="control" %}
             {% bootstrap_field sform.theme_color_success layout="control" %}
             {% bootstrap_field sform.theme_color_danger layout="control" %}
             {% bootstrap_field sform.theme_color_background layout="control" %}
             {% bootstrap_field sform.hover_button_color layout="control" %}
             {% bootstrap_field sform.theme_round_borders layout="control" %}
             {% bootstrap_field sform.primary_font layout="control" %}
+            <h4 class="settings-sub-heading">{% trans "Video area" %}</h4>
+            {% bootstrap_field sform.video_navigation_background_color layout="control" %}
+            {% bootstrap_field sform.video_sidebar_text_color layout="control" %}
+            {% bootstrap_field sform.video_sidebar_hover_color layout="control" %}
             {% endpropagated %}
+        </fieldset>
+        <fieldset>
+            <legend>{% trans "Display" %}</legend>
+            {% bootstrap_field sform.show_date_to layout="control" %}
+            {% bootstrap_field sform.show_times layout="control" %}
+        </fieldset>
+        <fieldset>
+            <legend>{% trans "Publication" %}</legend>
+            {% bootstrap_field form.is_public layout="control" %}
+            {% bootstrap_field sform.meta_noindex layout="control" %}
+        </fieldset>
+        <fieldset id="email-settings-tab">
+            <legend>{% trans "Email" %}</legend>
+            <h4 class="settings-sub-heading">{% trans "General" %}</h4>
+            {% bootstrap_field email_form.mail_from layout="control" %}
+            {% bootstrap_field email_form.mail_from_name layout="control" %}
+            {% bootstrap_field email_form.mail_reply_to layout="control" %}
+            {% bootstrap_field email_form.mail_bcc layout="control" %}
+            {% bootstrap_field email_form.mail_prefix layout="control" %}
+            {% bootstrap_field email_form.mail_text_signature layout="control" %}
+
+            <h4 class="settings-sub-heading">{% trans "Email gateway" %}</h4>
+            {% bootstrap_field email_form.smtp_use_custom layout="control" %}
+            <div id="smtp-custom-fields">
+                {% bootstrap_field email_form.email_vendor layout="control" %}
+                <div id="sendgrid-fields">
+                    {% bootstrap_field email_form.send_grid_api_key layout="control" %}
+                </div>
+                <div id="smtp-server-fields">
+                    {% bootstrap_field email_form.smtp_host layout="control" %}
+                    {% bootstrap_field email_form.smtp_port layout="control" %}
+                    {% bootstrap_field email_form.smtp_username layout="control" %}
+                    {% bootstrap_field email_form.smtp_password layout="control" %}
+                    {% bootstrap_field email_form.smtp_use_tls layout="control" %}
+                    {% bootstrap_field email_form.smtp_use_ssl layout="control" %}
+                </div>
+                {% bootstrap_field email_form.test_email layout="control" %}
+                <div class="form-group">
+                    <div class="col-md-9 col-md-offset-3">
+                        <button type="submit" class="btn btn-default" name="test" value="1">
+                            {% trans "Save and send test email" %}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </fieldset>
+        <fieldset id="email-design-tab">
+            <legend>{% trans "Email design" %}</legend>
+            <div class="alert alert-info">
+                {% blocktrans trimmed %}
+                    The HTML mail renderer controls the visual design of outgoing <strong>ticket</strong> emails.
+                    Talk emails use a fixed layout and are not affected by this choice.
+                {% endblocktrans %}
+            </div>
+            <div class="form-group">
+                <label class="col-md-3 control-label">{% trans "HTML mail renderer" %}</label>
+                <div class="col-md-9">
+                    <div class="row">
+                        {% for r in renderers.values %}
+                        <div class="col-md-4">
+                            <div class="well maildesignpreview text-center">
+                                <label class="radio">
+                                    <input type="radio"
+                                           name="{{ email_form.mail_html_renderer.html_name }}"
+                                           value="{{ r.identifier }}"
+                                           {% if email_form.mail_html_renderer.value == r.identifier %}checked{% endif %}>
+                                    {{ r.verbose_name }}
+                                </label>
+                                <img src="{% static r.thumbnail_filename %}" class="img-responsive" alt="{{ r.verbose_name }}">
+                                <a class="btn btn-default btn-sm" target="_blank" rel="noopener"
+                                        href='{% url "control:event.settings.mail.preview.layout" event=request.event.slug organizer=request.event.organizer.slug %}?renderer={{ r.identifier }}'>
+                                    {% trans "Preview" %}
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
         </fieldset>
     </div>
     <div class="form-group submit-group">
@@ -302,5 +406,34 @@
         </div>
     </div>
     {% endcomment %}
+
+    <!-- Cropper Modal -->
+    <div class="modal fade" id="cropperModal" tabindex="-1" role="dialog" aria-labelledby="cropperModalLabel"
+        aria-hidden="true" style="z-index: 1060;">
+        <div class="modal-dialog modal-lg" role="document" style="margin-top: 80px;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                    <h4 class="modal-title" id="cropperModalLabel">{% trans "Crop Image" %}</h4>
+                </div>
+                <div class="modal-body">
+                    <div class="img-container"
+                        style="max-height: 500px; overflow: hidden; display: flex; justify-content: center;">
+                        <img id="cropperImage" src="" alt="Picture" style="max-width: 100%;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">{% trans "Cancel" %}</button>
+                    <button type="button" class="btn btn-primary" id="cropperSaveBtn">{% trans "Apply Crop" %}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{% static 'vendored/cropperjs/cropper.min.js' %}"></script>
+    <script src="{% static 'eventyay-common/image_cropper.js' %}"></script>
 </form>
+<script src="{% static 'eventyay-common/js/event-settings-images.js' %}" type="module"></script>
 {% endblock %}

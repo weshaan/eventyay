@@ -7,18 +7,22 @@ import pytest
 from django.conf import settings
 from django.dispatch import Signal
 
+
 here = Path(__file__).parent
 doc_dir = here / "../../../doc"
 base_dir = here / "../../pretalx"
 
-plugin_docs = (doc_dir / "developer/plugins/general.rst").read_text()
-command_docs = (doc_dir / "administrator/commands.rst").read_text()
+try:
+    plugin_docs = (doc_dir / "developer/plugins/general.rst").read_text()
+    command_docs = (doc_dir / "administrator/commands.rst").read_text()
+except FileNotFoundError:
+    pytest.skip('documentation sources not available', allow_module_level=True)
 
 
 def test_documentation_includes_config_options():
     doc_text = (doc_dir / "administrator/configure.rst").read_text()
     config = configparser.RawConfigParser()
-    config = config.read(here / "../../pretalx.example.cfg")
+    config = config.read(here / "../../eventyay.example.cfg")
 
     for category in config:
         for key in category:
@@ -38,8 +42,7 @@ def test_documentation_includes_signals(app):
 @pytest.mark.parametrize("app", settings.LOCAL_APPS)
 def test_documentation_includes_management_commands(app):
     # devserver is not relevant for administrators, and spectacular is a
-    # third-party command for API doc generation that we only have as a
-    # local command in order to wrap it in scopes_disabled()
+    # third-party command for OpenAPI schema generation.
     excluded_commands = ("__init__.py", "devserver.py", "spectacular.py")
     with suppress(ImportError):
         importlib.import_module(app + ".management.commands")

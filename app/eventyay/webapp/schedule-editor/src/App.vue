@@ -53,14 +53,14 @@
 			#session-editor-wrapper(v-if="editorSession", @click="editorSession = null")
 				form#session-editor(@click.stop="", @submit.prevent="editorSave")
 					h3.session-editor-title(v-if="editorSession.code")
-						a(v-if="editorSession.code", :href="`/orga/event/${eventSlug}/submissions/${editorSession.code}/`") {{ getLocalizedString(editorSession.title) }}
+						a(v-if="organizerSlug && eventSlug", :href="`${api.getOrgaEventBase()}/submissions/${editorSession.code}/`") {{ getLocalizedString(editorSession.title) }}
 						span(v-else) {{ getLocalizedString(editorSession.title) }}
 					.data
 						.data-row(v-if="editorSession.code && editorSession.speakers && editorSession.speakers.length > 0").form-group.row
 							label.data-label.col-form-label.col-md-3 {{ $t('Speakers') }}
 							.col-md-9.data-value
 								span(v-for="speaker, index of editorSession.speakers")
-									a(v-if="speaker.code", :href="`/orga/event/${eventSlug}/speakers/${speaker.code}/`") {{ speaker.name || speaker.code }}
+									a(v-if="organizerSlug && eventSlug && speaker.code", :href="`${api.getOrgaEventBase()}/speakers/${speaker.code}/`") {{ speaker.name || speaker.code }}
 									span(v-else) {{ speaker.name }}
 									span(v-if="index != editorSession.speakers.length - 1") {{', '}}
 								span.text-warning(v-if="editorSession.speakers.some(s => !s.name)")  ({{ $t('some speakers have not shared their names') }})
@@ -186,6 +186,7 @@ const props = defineProps<{
 }>()
 
 const eventSlug = ref<string | null>(null)
+const organizerSlug = ref<string | null>(null)
 const scrollParentWidth = ref<number>(Infinity)
 const schedule = ref<Schedule | null>(null)
 const availabilities = reactive<{ rooms: Record<string, AvailabilityEntry[]>; talks: Record<string, AvailabilityEntry[]> }>({
@@ -340,7 +341,12 @@ const unscheduled = computed<SessionData[]>(() => {
 const deletedRoomSessions = computed<SessionData[]>(() => {
   if (!schedule.value) return []
   return schedule.value.talks
-    .filter((session) => session.start && (!session.room || !roomsLookup.value[lookupKey(session.room)]))
+    .filter(
+      (session) =>
+        session.code &&
+        session.start &&
+        (!session.room || !roomsLookup.value[lookupKey(session.room)]),
+    )
     .map((session) => ({
       id: session.id,
       code: session.code,
@@ -671,7 +677,9 @@ onBeforeMount(async () => {
   eventTimezone.value = schedule.value.timezone
   moment.tz.setDefault(eventTimezone.value)
   locales.value = schedule.value.locales
-  eventSlug.value = window.location.pathname.split('/')[3] ?? null
+  const match = window.location.pathname.match(/\/orga\/event\/([^/]+)\/([^/]+)/);
+  organizerSlug.value = match ? match[1] : null;
+  eventSlug.value = match ? match[2] : null;
   currentDay.value = days.value[0]
   window.setTimeout(pollUpdates, 10 * 100)
   await fetchAdditionalScheduleData()

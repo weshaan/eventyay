@@ -2,17 +2,15 @@ import datetime as dt
 from decimal import Decimal
 
 from django import forms
-from django.conf import settings
 from django.core.files.base import ContentFile
-from django.core.validators import RegexValidator
 from django.forms import inlineformset_factory
-from django.utils.html import format_html
-from django.utils.text import format_lazy
 from django.utils.translation import gettext_lazy as _
 from django_scopes.forms import SafeModelMultipleChoiceField
 from i18nfield.fields import I18nFormField, I18nTextarea
 from i18nfield.forms import I18nFormMixin, I18nFormSetMixin, I18nModelForm
 
+from eventyay.base.models import Event, EventExtraLink, ReviewPhase, ReviewScore, ReviewScoreCategory
+from eventyay.base.settings import GlobalSettingsObject
 from eventyay.common.forms.mixins import (
     HierarkeyMixin,
     I18nHelpText,
@@ -27,15 +25,27 @@ from eventyay.common.forms.widgets import (
 )
 from eventyay.common.text.css import validate_css
 from eventyay.common.text.phrases import phrases
-from eventyay.base.models import Event, EventExtraLink
-from eventyay.orga.forms.widgets import HeaderSelect, MultipleLanguagesWidget
-from eventyay.base.models import ReviewPhase, ReviewScore, ReviewScoreCategory
+from eventyay.orga.forms.widgets import HeaderSelect
 
-ENCRYPTED_PASSWORD_PLACEHOLDER = '*' * 24
 
 SCHEDULE_DISPLAY_CHOICES = (
     ('grid', _('Grid')),
     ('list', _('List')),
+)
+
+SHOW_FEATURED_VISIBILITY_CHOICES = (
+    ('never', _('Never')),
+    ('after_schedule', _('Once the first schedule version is published')),
+    ('always', _('Always')),
+)
+
+SHOW_FEATURED_SESSIONS_HELP = _(
+    'Controls when the featured sessions page and nav tab are shown. '
+    'Mark sessions as featured for content — Always alone does not populate the page.'
+)
+SHOW_FEATURED_SPEAKERS_HELP = _(
+    'Controls the featured speakers block on the event info page. '
+    'Mark speakers as featured for content — Always alone does not populate the page.'
 )
 
 
@@ -46,36 +56,16 @@ class EventForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, I18nModelForm):
         label='',
         help_text=_('You can type in your CSS instead of uploading it, too.'),
     )
-    imprint_url = forms.URLField(
-        label=_('Imprint URL'),
-        help_text=_(
-            'This should point e.g. to a part of your website that has your contact details and legal information.'
-        ),
-        required=False,
-    )
-    show_schedule = forms.BooleanField(
-        label=_('Show schedule publicly'),
-        help_text=_('Unset to hide your schedule, e.g. if you want to use the HTML export exclusively.'),
-        required=False,
-    )
-    schedule = forms.ChoiceField(
-        label=phrases.orga.event_schedule_format_label,
-        choices=SCHEDULE_DISPLAY_CHOICES,
-        required=True,
-    )
     show_featured = forms.ChoiceField(
         label=_('Show featured sessions'),
-        choices=(
-            ('never', _('Never')),
-            ('after_schedule', _('Once the first schedule version is published'),),
-            ('always', _('Always')),
-        ),
-        help_text=_(
-            'Never: the featured page and nav entry are always hidden. '
-            '"Once the first schedule version is published": featured sessions are hidden until you '
-            'release a schedule version; after the first release the featured page and tab appear. '
-            'Always: the featured page and tab are always visible (even before a schedule is released).'
-        ),
+        choices=SHOW_FEATURED_VISIBILITY_CHOICES,
+        help_text=SHOW_FEATURED_SESSIONS_HELP,
+        required=True,
+    )
+    show_featured_speakers = forms.ChoiceField(
+        label=_('Show featured speakers'),
+        choices=SHOW_FEATURED_VISIBILITY_CHOICES,
+        help_text=SHOW_FEATURED_SPEAKERS_HELP,
         required=True,
     )
     use_feedback = forms.BooleanField(
@@ -88,27 +78,9 @@ class EventForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, I18nModelForm):
         help_text=_('Enables session popularity (favourites) counts and sorting options in the schedule webapp.'),
         required=False,
     )
-    session_popularity_show_on_calendar = forms.BooleanField(
-        label=_('Show popularity on calendar view'),
-        help_text=_('Shows favourite counts on session cards in the calendar/grid view. Only used if popularity is enabled.'),
-        required=False,
-    )
-    session_popularity_show_on_list = forms.BooleanField(
-        label=_('Show popularity on list view'),
-        help_text=_('Shows favourite counts on session cards in the list view. Only used if popularity is enabled.'),
-        required=False,
-    )
-    export_html_on_release = forms.BooleanField(
-        label=_('Generate HTML export on schedule release'),
-        help_text=_('The static HTML export will be provided as a .zip archive on the schedule export page.'),
-        required=False,
-    )
-    html_export_url = forms.URLField(
-        label=_('HTML Export URL'),
-        help_text=_(
-            'If you publish your schedule via the HTML export, you will want the correct absolute URL to be set in various places. '
-            'Please only set this value once you have published your schedule. Should end with a slash.'
-        ),
+    session_popularity_show_on_schedule = forms.BooleanField(
+        label=_('Show popularity on schedule'),
+        help_text=_('Shows favourite counts on session cards in the schedule.'),
         required=False,
     )
     header_pattern = forms.ChoiceField(
@@ -118,23 +90,61 @@ class EventForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, I18nModelForm):
         required=False,
         widget=HeaderSelect,
     )
-    meta_noindex = forms.BooleanField(label=_('Ask search engines not to index the event pages'), required=False)
+    etherpad_enabled = forms.BooleanField(
+        label=_('Enable Etherpad for sessions'),
+        help_text=_('Allow collaborative Etherpad notes to be attached to sessions in this event.'),
+        required=False,
+    )
+    etherpad_auto_generate = forms.BooleanField(
+        label=_('Auto-generate Etherpad links'),
+        help_text=_('Offer a one-click button to create a pad for sessions that do not have one yet.'),
+        required=False,
+    )
+    etherpad_public = forms.BooleanField(
+        label=_('Show Etherpad links publicly'),
+        help_text=_('If unset, the pad link is hidden from public session pages and only visible to organisers.'),
+        required=False,
+    )
 
     def __init__(self, *args, **kwargs):
         self.is_administrator = kwargs.pop('is_administrator', False)
         super().__init__(*args, **kwargs)
         self.initial['custom_css_text'] = self.instance.custom_css.read().decode() if self.instance.custom_css else ''
-        self.fields['show_featured'].help_text = (
-            str(self.fields['show_featured'].help_text)
-            + ' '
-            + str(_('You can find the page <a {href}>here</a>.')).format(href=f'href="{self.instance.urls.featured}"')
-        )
+        flags = self.instance.feature_flags_as_mapping()
+        if 'show_featured_speakers' not in flags and 'show_featured' in flags:
+            self.fields['show_featured_speakers'].initial = flags['show_featured']
+        self._configure_session_popularity_fields(flags)
+        # Show Etherpad event toggles only when the platform has the integration enabled.
+        gs = GlobalSettingsObject().settings
+        if not (gs.etherpad_enabled and gs.etherpad_base_url):
+            for field_name in ('etherpad_enabled', 'etherpad_auto_generate', 'etherpad_public'):
+                self.fields.pop(field_name, None)
 
-    def clean_show_featured(self):
-        value = self.cleaned_data.get('show_featured', '')
+    def _configure_session_popularity_fields(self, flags):
+        if 'session_popularity_show_on_schedule' not in flags:
+            self.fields['session_popularity_show_on_schedule'].initial = bool(
+                flags.get('session_popularity_show_on_calendar', True)
+                or flags.get('session_popularity_show_on_list', True)
+            )
+        if not self._is_session_popularity_enabled():
+            self.fields['session_popularity_show_on_schedule'].disabled = True
+
+    def _is_session_popularity_enabled(self):
+        if self.is_bound:
+            return self.data.get('session_popularity_enabled') in ('on', 'true', 'True', '1')
+        return bool(self.instance.get_feature_flag('session_popularity_enabled'))
+
+    @staticmethod
+    def _normalize_featured_visibility(value):
         if value == 'pre_schedule':
             return 'after_schedule'
         return value
+
+    def clean_show_featured(self):
+        return self._normalize_featured_visibility(self.cleaned_data.get('show_featured', ''))
+
+    def clean_show_featured_speakers(self):
+        return self._normalize_featured_visibility(self.cleaned_data.get('show_featured_speakers', ''))
 
     def clean_custom_css(self):
         if self.cleaned_data.get('custom_css') or self.files.get('custom_css'):
@@ -161,12 +171,17 @@ class EventForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, I18nModelForm):
 
     def clean(self):
         data = super().clean()
+        enabled = bool(data.get('session_popularity_enabled'))
+        if enabled:
+            data['session_popularity_show_on_schedule'] = bool(
+                data.get('session_popularity_show_on_schedule', True)
+            )
+        else:
+            data['session_popularity_show_on_schedule'] = False
         return data
 
     def save(self, *args, **kwargs):
         result = super().save(*args, **kwargs)
-        if 'show_schedule' in self.cleaned_data:
-            self.instance.settings.talk_schedule_public = bool(self.cleaned_data['show_schedule'])
         css_text = self.cleaned_data.get('custom_css_text', '')
         if css_text and 'custom_css_text' in self.changed_data:
             self.instance.custom_css.save(self.instance.slug + '.css', ContentFile(css_text))
@@ -176,152 +191,54 @@ class EventForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, I18nModelForm):
     class Meta:
         model = Event
         fields = [
-            'email',
             'custom_css',
         ]
         json_fields = {
-            'imprint_url': 'display_settings',
-            'show_schedule': 'feature_flags',
-            'schedule': 'display_settings',
             'show_featured': 'feature_flags',
+            'show_featured_speakers': 'feature_flags',
             'use_feedback': 'feature_flags',
             'session_popularity_enabled': 'feature_flags',
-            'session_popularity_show_on_calendar': 'feature_flags',
-            'session_popularity_show_on_list': 'feature_flags',
+            'session_popularity_show_on_schedule': 'feature_flags',
+            'header_pattern': 'display_settings',
+            'etherpad_enabled': 'feature_flags',
+            'etherpad_auto_generate': 'feature_flags',
+            'etherpad_public': 'display_settings',
+        }
+
+
+class ScheduleHtmlExportForm(ReadOnlyFlag, I18nHelpText, JsonSubfieldMixin, forms.Form):
+    """Settings for the schedule HTML export feature, shown as a tab in Import/Export."""
+
+    export_html_on_release = forms.BooleanField(
+        label=_('Generate HTML export on schedule release'),
+        help_text=_('The static HTML export will be provided as a .zip archive on the schedule export page.'),
+        required=False,
+    )
+    html_export_url = forms.URLField(
+        label=_('HTML Export URL'),
+        help_text=_(
+            'If you publish your schedule via the HTML export, you will want the correct absolute URL to be set in various places. '
+            'Please only set this value once you have published your schedule. Should end with a slash.'
+        ),
+        required=False,
+    )
+
+    class Meta:
+        json_fields = {
             'export_html_on_release': 'feature_flags',
             'html_export_url': 'display_settings',
-            'header_pattern': 'display_settings',
-            'meta_noindex': 'display_settings',
         }
 
 
 class MailSettingsForm(ReadOnlyFlag, I18nFormMixin, I18nHelpText, JsonSubfieldMixin, forms.Form):
-    reply_to = forms.EmailField(
-        label=_('Contact address'),
-        help_text=_(
-            'Reply-To address. If this setting is empty and you have no custom sender, your event email address will be used as Reply-To address.'
-        ),
-        required=False,
-    )
-    subject_prefix = forms.CharField(
-        label=_('Mail subject prefix'),
-        help_text=_('The prefix will be prepended to outgoing mail subjects in [brackets].'),
-        required=False,
-    )
-    signature = forms.CharField(
-        label=_('Mail signature'),
-        help_text='',
-        required=False,
-        widget=forms.Textarea,
-    )
-    smtp_use_custom = forms.BooleanField(
-        label=_('Use custom SMTP server'),
-        help_text=_('All mail related to your event will be sent over the SMTP server specified by you.'),
-        required=False,
-    )
-    mail_from = forms.EmailField(
-        label=_('Sender address'),
-        help_text=_('Sender address for outgoing emails.'),
-        required=False,
-    )
-    smtp_host = forms.CharField(label=_('Hostname'), required=False)
-    smtp_port = forms.IntegerField(label=_('Port'), required=False)
-    smtp_username = forms.CharField(label=_('Username'), required=False)
-    smtp_password = forms.CharField(
-        label=_('Password'),
-        required=False,
-        widget=forms.PasswordInput(
-            attrs={'autocomplete': 'new-password'},
-            render_value=True,
-        ),
-        validators=[
-            RegexValidator(
-                r"^[A-Za-z0-9!\"#$%&'()*+,./:;<=>?@\^_`{}|~-]+$",
-                message=format_lazy(
-                    _(
-                        'The password contains unsupported letters. Please only use characters '
-                        'A-Z, a-z, 0-9, and common special characters ({characters}).'
-                    ),
-                    characters=r'!"#$%%&\'()*+,-./:;<=>?@\^_`{}|~',
-                ),
-            )
-        ],
-    )
-    smtp_use_tls = forms.BooleanField(
-        label=_('Use STARTTLS'),
-        help_text=_('Commonly enabled on port 587.'),
-        required=False,
-    )
-    smtp_use_ssl = forms.BooleanField(label=_('Use SSL'), help_text=_('Commonly enabled on port 465.'), required=False)
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields['signature'].help_text = format_lazy(
-            '{} <span class="markdown-hint">{}</span>',
-            _('The signature will be added to outgoing mails, preceded by “-- ”. '),
-            _('You can use Markdown in this field.'),
-        )
-        if self.fields['smtp_password'].initial:
-            self.fields['smtp_password'].initial = ENCRYPTED_PASSWORD_PLACEHOLDER
-
-    def clean(self):
-        data = self.cleaned_data
-        if not data.get('smtp_use_custom'):
-            # We don't need to validate all the rest when we don't use a custom email server
-            return data
-
-        if data.get('smtp_username'):
-            # Leave password unchanged if the username is set and the password field is empty
-            # or contains the encrypted password placeholder.
-            # This makes it impossible to set an empty password as long as a username is set, but
-            # Python's smtplib does not support password-less schemes anyway.
-            password = data.get('smtp_password')
-            if not password or password == ENCRYPTED_PASSWORD_PLACEHOLDER:
-                data['smtp_password'] = self.initial.get('smtp_password')
-
-        if not data.get('mail_from'):
-            self.add_error(
-                'mail_from',
-                ValidationError(_('You have to provide a sender address if you use a custom SMTP server.')),
-            )
-        if data.get('smtp_use_tls') and data.get('smtp_use_ssl'):
-            self.add_error(
-                'smtp_use_tls',
-                ValidationError(_('You can activate either SSL or STARTTLS security, but not both at the same time.')),
-            )
-        uses_encryption = data.get('smtp_use_tls') or data.get('smtp_use_ssl')
-        localhost_names = [
-            '127.0.0.1',
-            '::1',
-            '[::1]',
-            'localhost',
-            'localhost.localdomain',
-        ]
-        if not uses_encryption and data.get('smtp_host') not in localhost_names:
-            self.add_error(
-                'smtp_host',
-                ValidationError(
-                    _(
-                        'You have to activate either SSL or STARTTLS security if you use a non-local mailserver due to data protection reasons. '
-                        'Your administrator can add an instance-wide bypass. If you use this bypass, please also adjust your Privacy Policy.'
-                    )
-                ),
-            )
+    """
+    Talks-specific email settings. The fields reply_to, subject_prefix, and signature
+    have been moved to the central Email settings tab (CentralMailSettingsForm).
+    This form is kept for backward compatibility but currently has no fields.
+    """
 
     class Meta:
-        json_fields = {
-            'reply_to': 'mail_settings',
-            'subject_prefix': 'mail_settings',
-            'signature': 'mail_settings',
-            'smtp_use_custom': 'mail_settings',
-            'mail_from': 'mail_settings',
-            'smtp_host': 'mail_settings',
-            'smtp_port': 'mail_settings',
-            'smtp_username': 'mail_settings',
-            'smtp_password': 'mail_settings',
-            'smtp_use_tls': 'mail_settings',
-            'smtp_use_ssl': 'mail_settings',
-        }
+        json_fields = {}
 
 
 class ReviewSettingsForm(
@@ -389,28 +306,9 @@ class WidgetSettingsForm(JsonSubfieldMixin, forms.Form):
         required=False,
     )
 
-    session_popularity_enabled = forms.BooleanField(
-        label=_('Activate most popular session feature'),
-        help_text=_('Enables session popularity (favourites) counts and sorting options in the schedule webapp.'),
-        required=False,
-    )
-    session_popularity_show_on_calendar = forms.BooleanField(
-        label=_('Show popularity on calendar view'),
-        help_text=_('Shows favourite counts on session cards in the calendar/grid view. Only used if popularity is enabled.'),
-        required=False,
-    )
-    session_popularity_show_on_list = forms.BooleanField(
-        label=_('Show popularity on list view'),
-        help_text=_('Shows favourite counts on session cards in the list view. Only used if popularity is enabled.'),
-        required=False,
-    )
-
     class Meta:
         json_fields = {
             'show_widget_if_not_public': 'feature_flags',
-            'session_popularity_enabled': 'feature_flags',
-            'session_popularity_show_on_calendar': 'feature_flags',
-            'session_popularity_show_on_list': 'feature_flags',
         }
 
 
@@ -487,6 +385,9 @@ def strip_zeroes(value):
     return Decimal(value.rstrip('0'))
 
 
+DEFAULT_SCORE_COUNT = 3
+
+
 class ReviewScoreCategoryForm(I18nHelpText, I18nModelForm):
     new_scores = forms.CharField(required=False, initial='')
 
@@ -509,9 +410,13 @@ class ReviewScoreCategoryForm(I18nHelpText, I18nModelForm):
                 self.label_fields.append(
                     {
                         'score': score,
-                        'label_field': score._meta.get_field('label').formfield(initial=score.label),
+                        'label_field': score._meta.get_field('label').formfield(
+                            initial=score.label,
+                            widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': _('Label')})
+                        ),
                         'value_field': score._meta.get_field('value').formfield(
-                            initial=strip_zeroes(score.value), required=False
+                            initial=strip_zeroes(score.value), required=False,
+                            widget=forms.NumberInput(attrs={'step': '0.1', 'class': 'form-control', 'placeholder': _('Score')})
                         ),
                     }
                 )
@@ -520,14 +425,44 @@ class ReviewScoreCategoryForm(I18nHelpText, I18nModelForm):
             self.fields[f'value_{score_id}'] = score['value_field']
             self.fields[f'label_{score_id}'] = score['label_field']
 
+        self.protected_score_ids = {
+            score['score'].id
+            for score in sorted(self.label_fields, key=lambda s: s['score'].pk)[:DEFAULT_SCORE_COUNT]
+        }
+
     def _add_score_fields(self, label_id):
-        self.fields[f'value_{label_id}'] = ReviewScore._meta.get_field('value').formfield()
-        self.fields[f'label_{label_id}'] = ReviewScore._meta.get_field('label').formfield()
+        self.fields[f'value_{label_id}'] = ReviewScore._meta.get_field('value').formfield(
+            required=False,
+            widget=forms.NumberInput(attrs={'step': '0.1', 'class': 'form-control', 'placeholder': _('Score')})
+        )
+        self.fields[f'label_{label_id}'] = ReviewScore._meta.get_field('label').formfield(
+            required=False,
+            widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': _('Label')})
+        )
 
     def get_label_fields(self):
         for score in self.label_fields:
             score_id = score['score'].id
-            yield (self[f'value_{score_id}'], self[f'label_{score_id}'])
+            deletable = score_id not in self.protected_score_ids
+            yield (self[f'value_{score_id}'], self[f'label_{score_id}'], score_id, deletable)
+        for score_id in self.new_label_ids:
+            yield (self[f'value_{score_id}'], self[f'label_{score_id}'], score_id, True)
+
+    def clean(self):
+        data = super().clean()
+        existing_ids = [score['score'].id for score in self.label_fields]
+        for score_id in [*existing_ids, *self.new_label_ids]:
+            value = data.get(f'value_{score_id}')
+            label = data.get(f'label_{score_id}')
+            value_empty = value is None or value == ''
+
+            if value_empty and not label:
+                continue
+            if value_empty and label:
+                self.add_error(f'value_{score_id}', _('Please provide a numeric score.'))
+            elif not value_empty and not label:
+                self.add_error(f'label_{score_id}', _('Please provide a label for the score.'))
+        return data
 
     def save(self, *args, **kwargs):
         instance = super().save(*args, **kwargs)

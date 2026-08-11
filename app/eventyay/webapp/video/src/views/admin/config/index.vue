@@ -3,7 +3,6 @@
 	nav.admin-nav
 		h1 Configuration
 		router-link(:to="{name: 'admin:config'}") Event
-		router-link(:to="{name: 'admin:config:permissions'}") Permissions
 		router-link(:to="{name: 'admin:config:registration'}") User Profile
 		router-link(:to="{name: 'admin:config:privacy'}") Privacy
 		router-link(:to="{name: 'admin:config:token-generator'}") Token Generator
@@ -12,7 +11,6 @@
 	router-view
 </template>
 <script>
-
 export default {
 	name: 'AdminConfig'
 }

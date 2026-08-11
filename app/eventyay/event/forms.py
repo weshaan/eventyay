@@ -19,7 +19,8 @@ from eventyay.common.forms.widgets import (
 )
 from eventyay.common.text.phrases import phrases
 from eventyay.base.models import Event, Organizer, Team, TeamInvite
-from eventyay.orga.forms.widgets import HeaderSelect, MultipleLanguagesWidget
+from eventyay.control.forms import MultipleLanguagesWidget
+from eventyay.orga.forms.widgets import HeaderSelect
 from eventyay.base.models import Track
 
 
@@ -86,6 +87,7 @@ class TeamForm(ReadOnlyFlag, I18nHelpText, I18nModelForm):
             "can_change_submissions",
             "is_reviewer",
             "force_hide_speaker_names",
+            "force_hide_speaker_emails",
             "limit_tracks",
         ]
         widgets = {
@@ -277,7 +279,7 @@ class EventWizardDisplayForm(forms.Form):
     )
     email = forms.EmailField(
         label=_("Organizer email address"),
-        help_text=_("We'll show this publicly to allow attendees to contact you."),
+        help_text=_("Attendees can reach you through a contact form. Messages will be forwarded to this address."),
         required=True,
     )
 
@@ -285,13 +287,6 @@ class EventWizardDisplayForm(forms.Form):
         super().__init__(*args, **kwargs)
         logo = Event._meta.get_field('logo')
         self.fields['logo'] = ImageField(required=False, label=logo.verbose_name, help_text=logo.help_text)
-
-    def clean_email(self):
-        email = self.cleaned_data.get('email', '').strip()
-        default_email = Event._meta.get_field('email').default
-        if not email or email == default_email:
-            raise forms.ValidationError(_('Please provide a valid organizer email address.'))
-        return email
 
 
 class EventWizardCopyForm(forms.Form):

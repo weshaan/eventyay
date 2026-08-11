@@ -11,136 +11,128 @@ from django.utils.translation import gettext_lazy as _
 from pytz import common_timezones
 
 from eventyay.base.forms import I18nModelForm, SettingsForm
+from eventyay.base.meetup import (
+    add_video_field_errors,
+    apply_video_configuration,
+    build_video_form_fields,
+    get_video_config_initial,
+    is_meetup_event,
+)
 from eventyay.base.models import Event
 from eventyay.base.settings import validate_event_settings
 from eventyay.common.language import get_language_choices_native_with_ui_name
-from eventyay.common.urls import get_file_url_path, is_http_url, normalize_url_scheme
-from eventyay.control.forms import SlugWidget, SplitDateTimeField, SplitDateTimePickerWidget
+from eventyay.common.urls import get_file_url_path, is_http_url
+from eventyay.control.forms import MultipleLanguagesWidget, SlugWidget, SplitDateTimeField, SplitDateTimePickerWidget
 from eventyay.helpers.image_optimize import optimize_uploaded_image
 from eventyay.multidomain.models import KnownDomain
-from eventyay.orga.forms.widgets import MultipleLanguagesWidget
 
 logger = logging.getLogger(__name__)
 
 
-def is_external_image_url(value: str) -> bool:
-    return is_http_url(value)
-
-
 class EventCommonSettingsForm(SettingsForm):
-    event_logo_image_url = forms.URLField(
-        label=_('Logo URL'),
-        required=False,
-        help_text=_('Use an external image URL instead of uploading a logo file.'),
-    )
-    logo_image_url = forms.URLField(
-        label=_('Header image URL'),
-        required=False,
-        help_text=_('Use an external image URL instead of uploading a header image file.'),
-    )
     timezone = forms.ChoiceField(
         choices=((a, a) for a in common_timezones),
         label=_('Event timezone'),
     )
 
-    image_url_fields = {
-        'event_logo_image': 'event_logo_image_url',
-        'logo_image': 'logo_image_url',
-    }
-
-    @property
-    def image_source_states(self):
-        states = {}
-        for image_field in self.image_url_fields:
-            current_value = self.event.settings.get(image_field, as_type=str, default='') or ''
-            states[image_field] = {
-                'has_uploaded_file': bool(current_value and not is_external_image_url(current_value)),
-            }
-        return states
 
     auto_fields = [
         'locales',
         'locale',
         'region',
-        'imprint_url',
+        'contact_form_enabled',
+        'contact_mail',
         'logo_image',
         'logo_image_large',
         'event_logo_image',
+        'event_preview_image',
         'logo_show_title',
         'og_image',
         'primary_color',
         'header_background_color',
         'header_text_color',
         'navigation_text_color',
+        'menu_text_scroll_over_color',
         'theme_color_success',
         'theme_color_danger',
         'theme_color_background',
         'hover_button_color',
+        'video_navigation_background_color',
+        'video_sidebar_text_color',
+        'video_sidebar_hover_color',
         'theme_round_borders',
         'primary_font',
         'frontpage_text',
         'menu_label_tickets',
         'menu_label_join_video',
+        'meta_noindex',
+        'show_date_to',
+        'show_times',
     ]
 
     def clean(self):
         data = super().clean()
-
-        for image_field, url_field in self.image_url_fields.items():
-            image_url = data.get(url_field) or ''
-            submitted_image = self.fields[image_field].widget.value_from_datadict(
-                self.data,
-                self.files,
-                self.add_prefix(image_field),
+        if data.get('contact_form_enabled') and not data.get('contact_mail'):
+            self.add_error(
+                'contact_mail',
+                _('Please provide an email address for the contact form.'),
             )
-            has_new_upload = isinstance(submitted_image, UploadedFile)
-            if image_url and has_new_upload:
-                message = _('Either upload a file or enter an external URL, not both.')
-                self.add_error(image_field, message)
-                self.add_error(url_field, message)
-                continue
-
-            current_value = self.event.settings.get(image_field, as_type=str, default='') or ''
-            if image_url:
-                data[image_field] = normalize_url_scheme(image_url)
-            elif is_external_image_url(current_value) and not has_new_upload:
-                data[image_field] = None
-
         settings_dict = self.get_initial_settings()
-        settings_dict.update({k: v for k, v in data.items() if k not in self.image_url_fields.values()})
+        settings_dict.update(data)
         validate_event_settings(self.event, settings_dict)
+
+        if is_meetup_event(self.event):
+            add_video_field_errors(self, data.get('video_type'), data.get('video_url'))
+
         return data
 
     def save(self):
-        for image_field, url_field in self.image_url_fields.items():
+        for image_field in ('event_logo_image', 'logo_image', 'event_preview_image', 'og_image'):
             current_value = self.event.settings.get(image_field, as_type=str, default='') or ''
             new_value = self.cleaned_data.get(image_field)
-            if is_external_image_url(current_value) and (isinstance(new_value, UploadedFile) or not new_value):
-                del self.event.settings[image_field]
             current_file = get_file_url_path(current_value)
-            if type(new_value) is str and current_file and current_value != new_value:
+            if isinstance(new_value, UploadedFile) and current_file:
                 default_storage.delete(current_file)
-                
-                base_path, _ = os.path.splitext(current_file)
+
+                base_path, unused_ext = os.path.splitext(current_file)
                 orig_ext = self.event.settings.get(f'{image_field}_original_ext', as_type=str)
                 if orig_ext:
                     default_storage.delete(f'{base_path}_original.{orig_ext}')
-            self.cleaned_data[url_field] = None
 
             if isinstance(new_value, UploadedFile):
-                self.cleaned_data[image_field] = self._save_optimized(new_value, image_field)
+                try:
+                    prefix = self.add_prefix(image_field)
+                    crop_x = int(float(self.data.get(f'{prefix}_crop_x', '')))
+                    crop_y = int(float(self.data.get(f'{prefix}_crop_y', '')))
+                    crop_w = int(float(self.data.get(f'{prefix}_crop_w', '')))
+                    crop_h = int(float(self.data.get(f'{prefix}_crop_h', '')))
+                    if crop_w <= 0 or crop_h <= 0:
+                        raise ValueError('Invalid crop dimensions')
+                    crop_box = (crop_x, crop_y, crop_x + crop_w, crop_y + crop_h)
+                    self.event.settings.set(f'{image_field}_crop_data', f'{crop_x},{crop_y},{crop_w},{crop_h}')
+                except (ValueError, TypeError) as e:
+                    logger.error(f'Crop failed for {image_field}. Data keys: {[k for k in self.data.keys() if "crop" in k]}. Error: {e}')
+                    crop_box = None
+                self.cleaned_data[image_field] = self._save_optimized(new_value, image_field, crop_box)
+
+        if is_meetup_event(self.event) and 'video_type' in self.cleaned_data:
+            apply_video_configuration(
+                self.event,
+                self.cleaned_data.get('video_type'),
+                self.cleaned_data.get('video_url', ''),
+            )
 
         return super().save()
 
-    def _save_optimized(self, uploaded: UploadedFile, setting_key: str) -> str | UploadedFile:
+    def _save_optimized(self, uploaded: UploadedFile, setting_key: str, crop_box: tuple[int, int, int, int] | None = None) -> str | UploadedFile:
         """
         Resize and re-encode *uploaded*, persist the original alongside it,
         and return the path to the optimized file so that the settings form
         stores the optimized variant.
         """
         try:
-            result = optimize_uploaded_image(uploaded, setting_key)
-        except (OSError, ValueError):
+            result = optimize_uploaded_image(uploaded, setting_key, crop_box)
+        except Exception:
             logger.exception(
                 'Image optimization failed for %s; storing original unmodified',
                 setting_key,
@@ -148,8 +140,9 @@ class EventCommonSettingsForm(SettingsForm):
             uploaded.seek(0)
             return uploaded
 
-        new_filename = self.get_new_filename(uploaded.name or setting_key)
-        base_path, _ = os.path.splitext(new_filename)
+        clean_name, unused_ext = os.path.splitext(uploaded.name or setting_key)
+        new_filename = self.get_new_filename(clean_name)
+        base_path, unused_ext = os.path.splitext(new_filename)
 
         # Persist the optimized file.
         optimized_name = f'{base_path}.{result.optimized_ext}'
@@ -176,11 +169,12 @@ class EventCommonSettingsForm(SettingsForm):
     def __init__(self, *args, **kwargs):
         self.event = kwargs['obj']
         super().__init__(*args, **kwargs)
-        for image_field, url_field in self.image_url_fields.items():
-            current_value = self.event.settings.get(image_field, as_type=str, default='') or ''
-            if is_external_image_url(current_value):
-                self.initial[image_field] = None
-                self.initial[url_field] = current_value
+
+        # Meetup video stream support
+        if is_meetup_event(self.event):
+            self.fields.update(build_video_form_fields())
+            self.initial.update(get_video_config_initial(self.event))
+
         localized_language_choices = get_language_choices_native_with_ui_name()
         for fname in ('locales', 'content_locales'):
             if fname in self.fields:
@@ -195,6 +189,25 @@ class EventCommonSettingsForm(SettingsForm):
                 )
         if self.event and 'content_locales' in self.fields:
             self.fields['content_locales'].initial = self.event.content_locales
+        if 'meta_noindex' in self.fields:
+            self.fields['meta_noindex'].label = _('Ask search engines not to index the event pages')
+
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.ClearableFileInput):
+                field.widget.attrs['data-eventyay-file-wrapper'] = 'disabled'
+                field.widget.attrs['data-event-settings-image-tools'] = 'enabled'
+
+        if not self.is_bound and self.event:
+            contact_email = self.event.settings.contact_mail or self.event.email or ''
+            if contact_email:
+                if 'contact_form_enabled' in self.fields:
+                    raw = self.event.settings.get('contact_form_enabled')
+                    if raw in (None, '', False, 'False', 'false'):
+                        self.fields['contact_form_enabled'].initial = True
+                if 'contact_mail' in self.fields and not self.event.settings.contact_mail and self.event.email:
+                    self.fields['contact_mail'].initial = self.event.email
+
+
 
 
 class EventUpdateForm(I18nModelForm):
@@ -218,11 +231,12 @@ class EventUpdateForm(I18nModelForm):
             self.fields['slug'].widget.attrs['readonly'] = 'readonly'
         self.fields['location'].widget.attrs['rows'] = '3'
         self.fields['location'].widget.attrs['placeholder'] = _('Sample Conference Center\nHeidelberg, Germany')
+        self.fields['geo_lat'].widget.attrs['placeholder'] = _('Latitude, e.g. 40.7128')
+        self.fields['geo_lon'].widget.attrs['placeholder'] = _('Longitude, e.g. -74.0060')
 
-        # Configure email field with canonical label and help text
-        self.fields['email'].required = True
-        self.fields['email'].label = _('Organizer email address')
-        self.fields['email'].help_text = _("We'll show this publicly to allow attendees to contact you.")
+        if 'is_public' in self.fields:
+            self.fields['is_public'].label = _('Show in search results and lists')
+            self.fields['is_public'].help_text = _('If selected, this event will show up publicly on the list of events for your organizer account and in platform search results.')
 
         if self.domain_field_enabled:
             self.fields['domain'] = forms.CharField(
@@ -284,7 +298,6 @@ class EventUpdateForm(I18nModelForm):
             'location',
             'geo_lat',
             'geo_lon',
-            'email',
         ]
         field_classes = {
             'date_from': SplitDateTimeField,

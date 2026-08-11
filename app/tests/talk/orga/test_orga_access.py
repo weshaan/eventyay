@@ -33,7 +33,6 @@ def test_user_can_access_url(orga_client, logged_in, url, template_patch):
         ("mails.sent", 200, 404),
         ("mails.outbox.list", 200, 404),
         ("submissions.list", 200, 200),
-        ("submissions.statistics", 200, 200),
         ("submissions.create", 200, 404),
         ("submissions.cards", 200, 404),
         ("speakers.list", 200, 200),
@@ -122,7 +121,7 @@ def test_dev_settings_warning(orga_client, event):
 @pytest.mark.django_db
 @override_settings(DEBUG=True)
 def test_update_check_warning(orga_user, orga_client, event):
-    from pretalx.common.models.settings import GlobalSettings
+    from eventyay.base.models.settings import GlobalSettings
 
     orga_user.is_administrator = True
     orga_user.save()

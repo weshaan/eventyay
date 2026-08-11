@@ -2,6 +2,7 @@ import datetime
 import re
 from decimal import Decimal
 from json import loads
+from unittest.mock import patch
 
 from django.conf import settings
 from django.core import mail
@@ -11,11 +12,11 @@ from django.utils.timezone import now
 from django_scopes import scopes_disabled
 from pytz import timezone
 
-from pretix.base.models import (
+from eventyay.base.models import (
     Event,
-    Item,
-    ItemCategory,
-    ItemVariation,
+    Product as Item,
+    ProductCategory as ItemCategory,
+    ProductVariation as ItemVariation,
     Order,
     Organizer,
     Quota,
@@ -23,9 +24,10 @@ from pretix.base.models import (
     User,
     WaitingListEntry,
 )
-from pretix.base.models.items import SubEventItem, SubEventItemVariation
-from tests.base import SoupTest
-from tests.testdummy.signals import FoobarSalesChannel
+from eventyay.base.models.product import SubEventProduct as SubEventItem, SubEventProductVariation as SubEventItemVariation
+from tests.tickets.base import SoupTest
+from tests.tickets.testdummy.signals import FoobarSalesChannel
+from eventyay.presale.views.contact import ContactOrganizerView
 
 
 class EventTestMixin:
@@ -53,6 +55,36 @@ class EventMiddlewareTest(EventTestMixin, SoupTest):
         print('####', self.event.name)
         print('####', doc)
         self.assertIn(str(self.event.name), doc.find('title').text.strip())
+
+    def test_date_range_always_shown(self):
+        self.event.date_to = self.event.date_from + datetime.timedelta(days=1)
+        self.event.settings.show_date_to = True
+        self.event.settings.show_times = True
+        self.event.save()
+        resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn(self.event.get_date_range_display(), resp.rendered_content)
+        self.assertIn('Begin:', resp.rendered_content)
+        self.assertIn('End:', resp.rendered_content)
+
+    def test_date_range_shown_without_times(self):
+        self.event.date_to = self.event.date_from + datetime.timedelta(days=1)
+        self.event.settings.show_date_to = True
+        self.event.settings.show_times = False
+        self.event.save()
+        resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn(self.event.get_date_range_display(), resp.rendered_content)
+        self.assertNotIn('Begin:', resp.rendered_content)
+        self.assertNotIn('End:', resp.rendered_content)
+
+    def test_date_to_hidden_when_disabled(self):
+        self.event.date_to = self.event.date_from + datetime.timedelta(days=1)
+        self.event.settings.show_date_to = False
+        self.event.settings.show_times = True
+        self.event.save()
+        resp = self.client.get('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn(self.event.get_date_range_display(), resp.rendered_content)
+        self.assertIn('Begin:', resp.rendered_content)
+        self.assertNotIn('End:', resp.rendered_content)
 
     def test_not_found(self):
         resp = self.client.get('/%s/%s/' % ('foo', 'bar'))
@@ -991,6 +1023,33 @@ class VoucherRedeemItemDisplayTest(EventTestMixin, SoupTest):
         assert 'name="variation_%d_%d' % (self.item.pk, var2.pk) not in html.rendered_content
 
 
+class VoucherRedemptionVisibilityTest(EventTestMixin, SoupTest):
+    @scopes_disabled()
+    def setUp(self):
+        super().setUp()
+        self.q = Quota.objects.create(event=self.event, name='Quota', size=2)
+        self.v = self.event.vouchers.create(quota=self.q)
+        self.item = Item.objects.create(
+            event=self.event,
+            name='Early-bird ticket',
+            default_price=Decimal('12.00'),
+            active=True,
+        )
+        self.q.items.add(self.item)
+
+    def test_hidden_when_no_redeemable_product(self):
+        self.item.available_until = now() - datetime.timedelta(days=1)
+        self.item.save()
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        assert 'Redeem a voucher' not in doc.text
+
+    def test_shown_when_redeemable_product_exists(self):
+        self.item.available_until = now() + datetime.timedelta(days=1)
+        self.item.save()
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        assert 'Redeem a voucher' in doc.text
+
+
 class WaitingListTest(EventTestMixin, SoupTest):
     @scopes_disabled()
     def setUp(self):
@@ -1568,3 +1627,118 @@ class EventLocaleTest(EventTestMixin, SoupTest):
         self.assertEqual(response.status_code, 200)
         self.assertIn('26. Dezember', response.rendered_content)
         self.assertIn('14:00', response.rendered_content)
+
+
+class ContactOrganizerTest(EventTestMixin, SoupTest):
+    @property
+    def url(self):
+        return '/%s/%s/contact/' % (self.orga.slug, self.event.slug)
+
+    @scopes_disabled()
+    def setUp(self):
+        super().setUp()
+        self.event.settings.contact_mail = 'contact@example.com'
+        self.event.settings.set('contact_form_enabled', True)
+
+    def test_get_not_allowed(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 405)
+
+    def test_missing_message(self):
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': ''})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_missing_email_anonymous(self):
+        resp = self.client.post(self.url, {'email': '', 'message': 'Hello there'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_success_anonymous(self):
+        mail.outbox = []
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'Hello organizer!'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ['contact@example.com'])
+        self.assertEqual(mail.outbox[0].reply_to, ['visitor@example.com'])
+        self.assertIn('Hello organizer!', mail.outbox[0].body)
+
+    def test_success_authenticated(self):
+        self.client.login(email='dummy@dummy.dummy', password='dummy')
+        mail.outbox = []
+        resp = self.client.post(self.url, {'message': 'Authenticated message'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].reply_to, ['dummy@dummy.dummy'])
+
+    def test_falls_back_to_event_email(self):
+        self.event.email = 'orga@example.com'
+        self.event.save()
+        self.event.settings.contact_mail = ''
+        mail.outbox = []
+        print("contact_form_recipient_email:", self.event.contact_form_recipient_email())
+        print("show_contact_form:", self.event.show_contact_form())
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'Fallback test'})
+        print("resp body:", resp.json())
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(mail.outbox[0].to, ['orga@example.com'])
+
+    def test_no_contact_email_configured(self):
+        self.event.settings.contact_mail = ''
+        self.event.email = ''
+        self.event.save()
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'No recipient'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_contact_form_hidden_when_disabled(self):
+        self.event.settings.set('contact_form_enabled', False)
+        self.event.settings.contact_mail = 'contact@example.com'
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertNotIn('Contact event organizer', doc.text)
+
+    def test_contact_form_shown_when_enabled(self):
+        self.event.settings.set('contact_form_enabled', True)
+        self.event.settings.contact_mail = 'contact@example.com'
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn('Contact event organizer', doc.text)
+
+    def test_contact_form_legacy_behavior_shown_when_no_setting(self):
+        del self.event.settings.contact_form_enabled
+        self.event.settings.contact_mail = 'contact@example.com'
+        doc = self.get_doc('/%s/%s/' % (self.orga.slug, self.event.slug))
+        self.assertIn('Contact event organizer', doc.text)
+
+    def test_authenticated_user_without_email(self):
+        self.user.email = ''
+        self.user.save()
+        self.client.login(email='dummy@dummy.dummy', password='dummy')
+        mail.outbox = []
+        resp = self.client.post(self.url, {'email': 'fallback@example.com', 'message': 'No user email'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()['success'])
+        self.assertEqual(mail.outbox[0].reply_to, ['fallback@example.com'])
+
+    def test_invalid_email_rejected(self):
+        resp = self.client.post(self.url, {'email': 'not-an-email', 'message': 'Hello organizer!'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_message_too_long(self):
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'x' * 5001})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_message_too_short(self):
+        resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'Hi'})
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(resp.json()['success'])
+
+    def test_rate_limit_returns_429(self):
+        with patch.object(ContactOrganizerView, '_is_rate_limited', return_value=True):
+            resp = self.client.post(self.url, {'email': 'visitor@example.com', 'message': 'Hello organizer!'})
+        self.assertEqual(resp.status_code, 429)
+        self.assertFalse(resp.json()['success'])
+

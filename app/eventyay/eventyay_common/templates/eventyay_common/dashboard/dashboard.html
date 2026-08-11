@@ -27,6 +27,13 @@
               </a>
           </div>
           {% endif %}
+          {% if meetup_creation_enabled %}
+          <div class="widget-small widget-container">
+              <a href="{% url 'eventyay_common:events.add' %}?meetup=1" class="widget">
+                  <div class="newevent"><span class="fa fa-users"></span>{% trans "Create Meetup" %}</div>
+              </a>
+          </div>
+          {% endif %}
       {% endif %}
       {% for w in upcoming %}
           <div class="widget-{{ w.display_size|default:'small' }} {{ w.container_class|default:'widget-container' }} {% if w.lazy %}widget-lazy-loading{% endif %}" data-lazy-id="{{ w.lazy }}">
@@ -140,4 +147,6 @@
         </div>
     </div>
     {% include "eventyay_common/includes/ticket_permission_dialog.html" %}
+    {% include "eventyay_common/includes/talk_permission_dialog.html" %}
+    {% include "eventyay_common/includes/video_permission_dialog.html" with dialog_id=video_permission_dialog_id %}
 {% endblock %}

@@ -44,7 +44,7 @@ from eventyay.base.models import (
     SubEvent,
     Voucher,
 )
-from eventyay.base.settings import is_event_series_creation_enabled
+from eventyay.base.settings import is_event_series_creation_enabled, is_meetup_creation_enabled
 from eventyay.base.timeline import timeline_for_event
 from eventyay.control.forms.event import CommentForm
 from eventyay.control.signals import (
@@ -59,7 +59,9 @@ from ...base.models.orders import CancellationRequest
 from ..permissions import (
     filter_timeline_entry_for_ticket_access,
     get_cached_event_dashboard_access,
+    user_has_talk_dashboard_access,
     user_has_ticket_dashboard_access,
+    user_has_video_dashboard_access,
 )
 from ..utils import EventCreatedFor, get_subevent
 
@@ -72,6 +74,8 @@ SHOP_STATE_WIDGET_KEY = 'shop_state'
 # ``key='shop_state'`` on their dashboard widget payload (see shop_state_widget).
 EVENT_SETTINGS_PERMISSION_DIALOG_ID = 'event-settings-permission-dialog'
 TICKET_PERMISSION_DIALOG_ID = 'ticket-permission-dialog'
+TALK_PERMISSION_DIALOG_ID = 'talk-permission-dialog'
+VIDEO_PERMISSION_DIALOG_ID = 'video-permission-dialog'
 
 
 def _sanitize_widget_content_for_permission_dialog(content: str) -> str:
@@ -461,13 +465,13 @@ class EventWidgetGenerator:
     @staticmethod
     def generate_video_button(event: Event, request: HttpRequest) -> str:
         """
-        Generate a video button based on the user's ticket permissions.
+        Generate a video button based on the user's video permissions.
         The access view will ensure configuration and plugin setup as needed.
         """
-        has_ticket_access = user_has_ticket_dashboard_access(
+        has_video_access = user_has_video_dashboard_access(
             request.user, event.organizer, event, request=request
         )
-        if has_ticket_access:
+        if has_video_access:
             url = reverse(
                 'eventyay_common:event.create_access_to_video',
                 kwargs={'event': event.slug, 'organizer': event.organizer.slug},
@@ -475,26 +479,42 @@ class EventWidgetGenerator:
             return f'<a href="{url}" class="component">{_("Video")}</a>'
 
         return format_html(
-            '<button type="button" class="component" aria-haspopup="dialog" '
-            'aria-controls="{}" data-dialog-target="#{}" data-toggle="dialog">{}</button>',
-            TICKET_PERMISSION_DIALOG_ID,
-            TICKET_PERMISSION_DIALOG_ID,
+            '<a href="#" role="button" class="component" aria-haspopup="dialog" '
+            'aria-controls="{}" data-dialog-target="#{}" data-toggle="dialog">{}</a>',
+            VIDEO_PERMISSION_DIALOG_ID,
+            VIDEO_PERMISSION_DIALOG_ID,
             _('Video'),
         )
 
     @staticmethod
-    def generate_talk_button(event: Event) -> str:
+    def generate_talk_button(event: Event, request: HttpRequest) -> str:
         """
-        Generate a talk button based on event settings.
+        Generate a talk button based on event settings and user permission.
         """
-        if event.settings.create_for == EventCreatedFor.BOTH.value or event.settings.talk_schedule_public is not None:
-            talk_url = reverse('orga:event.dashboard', kwargs={'event': event.slug})
-            return f'<a href="{talk_url}" class="middle-component">{_("Talks")}</a>'
-        return f"""
-            <a href="#" data-toggle="modal" data-target="#alert-modal" class="middle-component">
-                {_('Talks')}
-            </a>
-        """
+        if event.settings.create_for != EventCreatedFor.BOTH.value and event.settings.talk_schedule_public is None:
+            return format_html(
+                '<a href="#" data-toggle="modal" data-target="#alert-modal" class="middle-component">{}</a>',
+                _('Talks'),
+            )
+
+        has_talk_access = user_has_talk_dashboard_access(
+            request.user, event.organizer, event, request=request
+        )
+        if not has_talk_access:
+            return format_html(
+                '<a href="#" class="middle-component" role="button" aria-haspopup="dialog" '
+                'aria-controls="{}" data-dialog-target="#{}" data-toggle="dialog">{}</a>',
+                TALK_PERMISSION_DIALOG_ID,
+                TALK_PERMISSION_DIALOG_ID,
+                _('Talks'),
+            )
+
+        talk_url = reverse('orga:event.dashboard', kwargs={'organizer': event.organizer.slug, 'event': event.slug})
+        return format_html(
+            '<a href="{}" class="middle-component">{}</a>',
+            talk_url,
+            _('Talks'),
+        )
 
     @staticmethod
     def generate_ticket_button(event: Event, request: HttpRequest) -> str:
@@ -517,8 +537,8 @@ class EventWidgetGenerator:
                 _('Tickets'),
             )
         return format_html(
-            '<button type="button" class="component" aria-haspopup="dialog" '
-            'aria-controls="{}" data-dialog-target="#{}" data-toggle="dialog">{}</button>',
+            '<a href="#" role="button" class="component" aria-haspopup="dialog" '
+            'aria-controls="{}" data-dialog-target="#{}" data-toggle="dialog">{}</a>',
             TICKET_PERMISSION_DIALOG_ID,
             TICKET_PERMISSION_DIALOG_ID,
             _('Tickets'),
@@ -560,7 +580,7 @@ class EventWidgetGenerator:
                 ),
                 ticket_button=cls.generate_ticket_button(event, request),
                 video_button=cls.generate_video_button(event, request),
-                talk_button=cls.generate_talk_button(event),
+                talk_button=cls.generate_talk_button(event, request),
             )
 
         return {
@@ -637,6 +657,7 @@ def eventyay_common_dashboard(request: HttpRequest) -> HttpResponse:
         'widgets': rearrange(widgets),
         'can_create_event': request.user.teams.filter(can_create_events=True).exists(),
         'event_series_creation_enabled': is_event_series_creation_enabled(request),
+        'meetup_creation_enabled': is_meetup_creation_enabled(request),
         'upcoming': widgets_for_event_qs(
             request,
             annotated_event_query(request, lazy=True)
@@ -710,6 +731,7 @@ def eventyay_common_dashboard(request: HttpRequest) -> HttpResponse:
             .order_by('date_from')[:10]
         )
     ctx['followed_upcoming_events'] = followed_upcoming_events
+    ctx['video_permission_dialog_id'] = VIDEO_PERMISSION_DIALOG_ID
 
     return render(request, 'eventyay_common/dashboard/dashboard.html', ctx)
 

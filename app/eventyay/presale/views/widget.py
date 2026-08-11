@@ -40,6 +40,7 @@ from eventyay.helpers.thumb import get_thumbnail
 from eventyay.multidomain.urlreverse import build_absolute_uri
 from eventyay.presale.views.cart import get_or_create_cart_id
 from eventyay.presale.views.event import (
+    event_has_redeemable_voucher_products,
     get_grouped_products,
     product_group_by_category,
 )
@@ -230,7 +231,7 @@ class WidgetAPIProductList(EventListMixin, View):
                 {
                     'id': cat.pk if cat else None,
                     'name': str(cat.name) if cat else None,
-                    'description': str(rich_text(cat.description, safelinks=False))
+                    'description': str(rich_text(cat.description))
                     if cat and cat.description
                     else None,
                     'items': [
@@ -238,7 +239,7 @@ class WidgetAPIProductList(EventListMixin, View):
                             'id': product.pk,
                             'name': str(product.name),
                             'picture': get_picture(self.request.event, product.picture) if product.picture else None,
-                            'description': str(rich_text(product.description, safelinks=False))
+                            'description': str(rich_text(product.description))
                             if product.description
                             else None,
                             'has_variations': product.has_variations,
@@ -271,7 +272,7 @@ class WidgetAPIProductList(EventListMixin, View):
                                     'id': var.id,
                                     'value': str(var.value),
                                     'order_max': var.order_max,
-                                    'description': str(rich_text(var.description, safelinks=False))
+                                    'description': str(rich_text(var.description))
                                     if var.description
                                     else None,
                                     'price': price_dict(product, var.display_price),
@@ -793,11 +794,11 @@ class WidgetAPIProductList(EventListMixin, View):
 
         data['has_seating_plan'] = ev.seating_plan is not None
 
-        vouchers_exist = self.request.event.get_cache().get('vouchers_exist')
-        if vouchers_exist is None:
-            vouchers_exist = self.request.event.vouchers.exists()
-            self.request.event.get_cache().set('vouchers_exist', vouchers_exist)
-        data['vouchers_exist'] = vouchers_exist
+        data['vouchers_exist'] = event_has_redeemable_voucher_products(
+            request.event,
+            self.subevent,
+            channel=request.sales_channel.identifier,
+        )
 
         if 'cart_id' not in request.GET:
             cache.set(cache_key, data, 10)

@@ -9,7 +9,8 @@ from celery.result import AsyncResult
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import update_session_auth_hash
-from django.contrib.auth.mixins import UserPassesTestMixin
+from django.core.exceptions import PermissionDenied
+from django.utils.decorators import method_decorator
 from eventyay.base.models.auth import User
 from django.db import transaction
 from django.db.models import Count, F, Max, OuterRef, Subquery
@@ -28,6 +29,7 @@ from django.views.generic import (
     UpdateView,
     View,
 )
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from eventyay.base.models import (
     BBBCall,
@@ -57,15 +59,25 @@ from eventyay.control.forms.server_management import (
     EventForm,
 )
 from eventyay.base.models.log import LogEntry
+from eventyay.control.permissions import AdministratorPermissionRequiredMixin
 from eventyay.control.signals import video_admin_event_forms
 from eventyay.control.tasks import clear_event_data
 
 
-class SuperuserBase(UserPassesTestMixin):
-    login_url = "/control/auth/login/"
+class AdminBase(AdministratorPermissionRequiredMixin):
+    """Simple View mixin for now, but will make it easier to
+    improve permissions in the future."""
 
-    def test_func(self):
-        return self.request.user.is_superuser
+    @method_decorator(xframe_options_sameorigin)
+    def dispatch(self, request, *args, **kwargs):
+        return super().dispatch(request, *args, **kwargs)
+
+
+class SuperuserBase(AdminBase):
+    def dispatch(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            raise PermissionDenied()
+        return super().dispatch(request, *args, **kwargs)
 
 
 class UserList(SuperuserBase, ListView):
@@ -91,25 +103,9 @@ class UserUpdate(SuperuserBase, UpdateView):
         return super().form_valid(form)
 
 
-class AdminBase(UserPassesTestMixin):
-    """Simple View mixin for now, but will make it easier to
-    improve permissions in the future."""
-
-    login_url = "/control/auth/login/"
-
-    def test_func(self):
-        secret_key = self.request.GET.get("control_token")
-        if secret_key and secret_key == settings.CONTROL_SECRET:
-            return True
-        return self.request.user.is_staff
-
-
-class SignupView(AdminBase, FormView):
+class SignupView(SuperuserBase, FormView):
     template_name = "registration/register.html"
     form_class = SignupForm
-
-    def test_func(self):
-        return self.request.user.is_superuser
 
     def form_valid(self, form):
         form.save()
@@ -242,7 +238,7 @@ class EventAdminToken(AdminBase, DetailView):
         secret = jwt_config["secret"]
         audience = jwt_config["audience"]
         issuer = jwt_config["issuer"]
-        iat = datetime.datetime.utcnow()
+        iat = datetime.datetime.now(datetime.timezone.utc)
         exp = iat + datetime.timedelta(days=7)
         payload = {
             "iss": issuer,
@@ -330,6 +326,7 @@ class EventCreate(FormsetMixin, AdminBase, CreateView):
         }
         if self.copy_from:
             form.instance.clone_from(self.copy_from, new_secrets=True)
+            form.instance.copy_data_from(self.copy_from)
 
         self.object = form.save()
 
@@ -344,7 +341,9 @@ class EventCreate(FormsetMixin, AdminBase, CreateView):
             # Point to SPA at /video/<event_id>
             base_site = settings.SITE_URL.rstrip('/')
             self.object.settings.venueless_url = f"{base_site}/video/{self.object.pk}"
-        except Exception:
+            if self.copy_from and self.copy_from.settings.get('event_type') == 'meetup':
+                self.object.settings.set('meetup_video_active', True)
+        except (KeyError, IndexError, TypeError, AttributeError):
             pass
 
         for f in self.formset.extra_forms:
@@ -365,7 +364,7 @@ class EventCreate(FormsetMixin, AdminBase, CreateView):
                 self.object.settings.venueless_audience = audience
                 base_site = settings.SITE_URL.rstrip('/')
                 self.object.settings.venueless_url = f"{base_site}/video/{self.object.pk}"
-            except Exception:
+            except (KeyError, IndexError, TypeError, AttributeError):
                 pass
 
         LogEntry.objects.create(
@@ -812,12 +811,13 @@ class BBBMoveRoom(AdminBase, FormView):
         except BBBCall.DoesNotExist:
             messages.error(self.request, _("No BBB session found for this room."))
             return HttpResponseRedirect(self.request.path)
+        source_server = c.server
         try:
             u = get_url(
                 "end",
                 {"meetingID": c.meeting_id, "password": c.moderator_pw},
-                server.url,
-                server.secret,
+                source_server.url,
+                source_server.secret,
             )
             r = requests.get(u, timeout=15)
             r.raise_for_status()

@@ -16,7 +16,7 @@
         </a>
 
         {% if request.event.live or is_organiser %}
-            {% if show_tickets_tab %}
+            {% if show_tickets_tab and not is_meetup_event %}
                 {% get_localized_menu_label request.event 'menu_label_tickets' as label %}
                 <a href="{% eventurl request.event 'presale:event.index' %}#tickets" id="nav-tab-tickets" class="header-tab">
                     <i class="fa fa-ticket"></i> {{ label }}
@@ -34,12 +34,12 @@
                 <a href="{{ request.event.talk_session_url }}" class="header-tab {% if '/sessions/' in request.path_info %}active{% endif %}">
                     <i class="fa fa-comments-o"></i> {% translate "Sessions" %}
                 </a>
-
-                {% if request.event.speakers.exists %}
+            {% endif %}
+            {% show_public_speakers_list request.event as show_speakers_list %}
+            {% if show_speakers_list %}
                     <a href="{{ request.event.talk_speaker_url }}" class="header-tab {% if '/speakers/' in request.path_info %}active{% endif %}">
                         <i class="fa fa-group"></i> {% translate "Speakers" %}
                     </a>
-                {% endif %}
             {% endif %}
         {% endif %}
 

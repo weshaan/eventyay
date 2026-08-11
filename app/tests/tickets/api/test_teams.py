@@ -2,7 +2,7 @@ import pytest
 from django.core import mail
 from django_scopes import scopes_disabled
 
-from pretix.base.models import Team, User
+from eventyay.base.models import Team, User
 
 
 @pytest.fixture
@@ -28,9 +28,13 @@ TEST_TEAM_RES = {
     'can_change_items': True,
     'can_view_orders': True,
     'can_change_orders': True,
+    'can_manage_bank_transfers': False,
     'can_view_vouchers': True,
     'can_change_vouchers': True,
     'can_checkin_orders': False,
+    'can_change_exhibition_proposals': False,
+    'is_exhibition_reviewer': False,
+    'hide_exhibition_applicant_emails': False,
 }
 
 SECOND_TEAM_RES = {
@@ -46,9 +50,13 @@ SECOND_TEAM_RES = {
     'can_change_items': False,
     'can_view_orders': False,
     'can_change_orders': False,
+    'can_manage_bank_transfers': False,
     'can_view_vouchers': False,
     'can_change_vouchers': False,
     'can_checkin_orders': False,
+    'can_change_exhibition_proposals': False,
+    'is_exhibition_reviewer': False,
+    'hide_exhibition_applicant_emails': False,
 }
 
 
@@ -113,6 +121,25 @@ def test_team_update(token_client, organizer, event, second_team):
     )
     print(resp.data)
     assert resp.status_code == 400
+
+
+@pytest.mark.django_db
+def test_team_update_enforces_permission_implications(token_client, organizer, event, second_team):
+    resp = token_client.patch(
+        '/api/v1/organizers/{}/teams/{}/'.format(organizer.slug, second_team.pk),
+        {
+            'can_change_orders': True,
+            'can_view_orders': False,
+            'can_change_vouchers': True,
+            'can_view_vouchers': False,
+            'can_manage_bank_transfers': True,
+        },
+        format='json',
+    )
+    assert resp.status_code == 200
+    second_team.refresh_from_db()
+    assert second_team.can_view_orders
+    assert second_team.can_view_vouchers
 
 
 @pytest.mark.django_db
@@ -286,3 +313,13 @@ def test_team_token_create(token_client, organizer, event, second_team):
     assert t.name == 'New token'
     assert t.active
     assert resp.data['token'] == t.token
+
+
+@pytest.mark.django_db
+def test_team_permission_error_is_raised(organizer):
+    from eventyay.base.models.organizer import TeamPermissionError, check_access_permissions
+
+    organizer.teams.all().delete()
+    with pytest.raises(TeamPermissionError):
+        check_access_permissions(organizer)
+

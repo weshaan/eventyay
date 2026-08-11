@@ -81,14 +81,14 @@
 							| {{ opt.label }}
 			.view-toggle
 				button.filter-btn.view-btn(@click="toggleView", :title="viewToggleTitle")
-					svg.filter-icon(v-if="viewMode === 'list'", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke-width="2")
+					svg.filter-icon(v-if="activeViewMode === 'list'", viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke-width="2")
 						path(d="M4 6h16M4 12h16M4 18h16")
 					svg.filter-icon(v-else, viewBox="0 0 24 24", fill="none", stroke="currentColor", stroke-width="2")
 						rect(x="3" y="3" width="7" height="7")
 						rect(x="14" y="3" width="7" height="7")
 						rect(x="3" y="14" width="7" height="7")
 						rect(x="14" y="14" width="7" height="7")
-	.speakers-grid(v-if="filteredSpeakers.length && viewMode === 'list'")
+	.speakers-grid(v-if="filteredSpeakers.length && activeViewMode === 'list'")
 		a.speaker-card(
 			v-for="speaker in filteredSpeakers",
 			:key="speaker.code",
@@ -113,7 +113,7 @@
 					span.session-title(v-for="(session, idx) in speaker.sessions", :key="session.id")
 						| {{ getLocalizedString(session.title) }}
 						span.separator(v-if="idx < speaker.sessions.length - 1") ,&nbsp;
-	.speakers-details(v-else-if="filteredSpeakers.length && viewMode === 'details'")
+	.speakers-details(v-else-if="filteredSpeakers.length && activeViewMode === 'details'")
 		.featured-speakers-grid
 			.featured-speaker-column(v-for="speaker in filteredSpeakers", :key="speaker.code")
 				details.featured-speaker-card
@@ -132,8 +132,10 @@
 								h4 {{ speaker.name || t.speaker_fallback }}
 								markdown-content.featured-speaker-preview-bio(v-if="speaker.biography", :markdown="speaker.biography")
 					.featured-speaker-details
+						speaker-social-links(:links="speaker.social_links", alignment="flex-start")
 						template(v-if="speaker.sessions && speaker.sessions.length")
-							hr.featured-speaker-divider
+							hr.featured-speaker-divider(v-if="speaker.social_links && speaker.social_links.length")
+							hr.featured-speaker-divider(v-else)
 							.featured-speaker-sessions
 								h4 {{ t.sessions }}
 								.featured-speaker-session(v-for="session in speaker.sessions", :key="session.id")
@@ -154,8 +156,9 @@
 
 <script>
 import moment from 'moment-timezone'
-import { getLocalizedString } from '../utils'
+import { getLocalizedString, compareFeaturedSpeakers, isFeaturedSpeakersSortAvailable, sessionsForSpeaker } from '../utils'
 import MarkdownContent from './MarkdownContent'
+import SpeakerSocialLinks from './SpeakerSocialLinks.vue'
 
 function normalizeLocaleCode (code) {
 	if (!code || typeof code !== 'string') return null
@@ -178,7 +181,7 @@ function localesMatch (filterValue, sessionValue) {
 
 export default {
 	name: 'SpeakersList',
-	components: { MarkdownContent },
+	components: { MarkdownContent, SpeakerSocialLinks },
 	inject: {
 		scheduleData: { default: null },
 		eventUrl: { default: '' },
@@ -207,6 +210,11 @@ export default {
 		hideToolbar: {
 			type: Boolean,
 			default: false
+		},
+		viewMode: {
+			type: String,
+			default: 'details',
+			validator: (value) => ['list', 'details'].includes(value)
 		}
 	},
 	data() {
@@ -217,13 +225,23 @@ export default {
 			selectedTracks: [],
 			sortBy: 'featured',
 			openDropdown: null,
-			viewMode: 'list',
+			activeViewMode: this.viewMode,
 			mobileFiltersOpen: false,
 			mobileMoreOpen: false,
 		}
 	},
 	mounted() {
 		document.addEventListener('click', this.onOutsideClick, true)
+		if (!this.featuredSortAvailable && this.sortBy === 'featured') {
+			this.sortBy = 'a-z'
+		}
+	},
+	watch: {
+		featuredSortAvailable(available) {
+			if (!available && this.sortBy === 'featured') {
+				this.sortBy = 'a-z'
+			}
+		},
 	},
 	beforeUnmount() {
 		document.removeEventListener('click', this.onOutsideClick, true)
@@ -262,11 +280,20 @@ export default {
 			return Boolean(this.searchQuery) || this.selectedLanguages.length > 0 || this.selectedTracks.length > 0
 		},
 		sortOptions() {
-			return [
-				{ value: 'featured', label: this.t.featured },
+			const options = [
 				{ value: 'a-z', label: this.t.a_to_z },
 				{ value: 'z-a', label: this.t.z_to_a },
 			]
+			if (this.featuredSortAvailable) {
+				options.unshift({ value: 'featured', label: this.t.featured })
+			}
+			return options
+		},
+		featuredSortAvailable() {
+			return isFeaturedSpeakersSortAvailable({
+				flags: this.scheduleData?.schedule?.feature_flags || {},
+				speakers: this.scheduleData?.schedule?.speakers || [],
+			})
 		},
 		currentSortLabel() {
 			const opt = this.sortOptions.find(o => o.value === this.sortBy)
@@ -311,11 +338,11 @@ export default {
 			}
 			return (schedule?.speakers || []).map(speaker => ({
 				...speaker,
-				sessions: sessionsBySpeaker[speaker.code] || [],
+				sessions: sessionsForSpeaker(sessionsBySpeaker, speaker.code),
 			}))
 		},
 		viewToggleTitle() {
-			return this.viewMode === 'list' ? this.t.view_details : this.t.view_list
+			return this.activeViewMode === 'list' ? this.t.view_details : this.t.view_list
 		},
 		trackFilteredSpeakers() {
 			if (!this.selectedTracks.length) return this.resolvedSpeakers
@@ -351,25 +378,23 @@ export default {
 		},
 		sortedSpeakers() {
 			const speakers = [...this.languageFilteredSpeakers]
+			const byName = (a, b, dir = 1) => {
+				const an = (a.name || '').trim()
+				const bn = (b.name || '').trim()
+				if (!!an !== !!bn) return an ? -1 : 1
+				return dir * an.localeCompare(bn)
+			}
 			if (this.sortBy === 'featured') {
-				return speakers.sort((a, b) => {
-					const af = a.is_featured ? 1 : 0
-					const bf = b.is_featured ? 1 : 0
-					if (af !== bf) return bf - af
-					const ap = Number.isFinite(a.featured_position) ? a.featured_position : 1e9
-					const bp = Number.isFinite(b.featured_position) ? b.featured_position : 1e9
-					if (ap !== bp) return ap - bp
-					return (a.name || '').localeCompare(b.name || '')
-				})
+				return speakers.sort((a, b) => compareFeaturedSpeakers(a, b, { featuredFirst: true }))
 			}
 			if (this.sortBy === 'a-z') {
-				return speakers.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+				return speakers.sort((a, b) => byName(a, b))
 			}
 			if (this.sortBy === 'z-a') {
-				return speakers.sort((a, b) => (b.name || '').localeCompare(a.name || ''))
+				return speakers.sort((a, b) => byName(a, b, -1))
 			}
 			// default: a-z
-			return speakers.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+			return speakers.sort((a, b) => byName(a, b))
 		},
 		filteredSpeakers() {
 			if (!this.searchQuery) return this.sortedSpeakers
@@ -473,7 +498,7 @@ export default {
 			this.openDropdown = null
 		},
 		toggleView() {
-			this.viewMode = this.viewMode === 'list' ? 'details' : 'list'
+			this.activeViewMode = this.activeViewMode === 'list' ? 'details' : 'list'
 		}
 	}
 }
@@ -489,7 +514,7 @@ export default {
 		display: flex
 		align-items: center
 		gap: 8px
-		padding: 12px 10px 0
+		padding: 6px 8px 0
 		flex-wrap: wrap
 		min-width: 0
 		width: 100%
@@ -922,7 +947,7 @@ export default {
 @media (max-width: 600px)
 	.c-speakers-list
 		.speakers-toolbar
-			padding: 10px 10px 0
+			padding: 6px 8px 0
 			gap: 6px
 			flex-wrap: nowrap
 			.search-box
@@ -937,7 +962,7 @@ export default {
 			.toolbar-secondary
 				display: none
 				position: absolute
-				top: calc(100% + 8px)
+				top: calc(100% + 4px)
 				z-index: 120
 				padding: 8px
 				background: #fff

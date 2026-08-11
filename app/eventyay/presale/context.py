@@ -121,6 +121,8 @@ def _default_context(request):
         if request.event.settings.presale_css_file:
             ctx['css_file'] = default_storage.url(request.event.settings.presale_css_file)
 
+        ctx['current_event_font'] = request.event.settings.get('primary_font', default='')
+
         ctx['event_logo'] = request.event.visible_header_image_url or ''
         ctx['event_logo_image'] = request.event.visible_logo_url or ''
         try:
@@ -134,16 +136,37 @@ def _default_context(request):
         if request.resolver_match:
             ctx['cart_namespace'] = request.resolver_match.kwargs.get('cart_namespace', '')
     elif hasattr(request, 'organizer'):
-        ctx['languages'] = [_safe_language_info(code) for code in request.organizer.settings.locales]
+        if not request.organizer.settings.get('presale_css_file') and not hasattr(request, 'event'):
+            lock_key = f'presale:regenerate_organizer_css:{request.organizer.pk}'
+            if cache.add(lock_key, True, 60):
+                try:
+                    from eventyay.presale.style import regenerate_organizer_css
 
-    if hasattr(request, 'organizer'):
+                    regenerate_organizer_css.apply_async(args=(request.organizer.pk,))
+                except Exception:
+                    cache.delete(lock_key)
+                    logger.warning(
+                        'Could not enqueue presale CSS regeneration for %s',
+                        request.organizer.slug,
+                        exc_info=True,
+                    )
+        ctx['languages'] = [_safe_language_info(code) for code in request.organizer.settings.locales]
         if request.organizer.settings.presale_css_file and not hasattr(request, 'event'):
             ctx['css_file'] = default_storage.url(request.organizer.settings.presale_css_file)
-        ctx['organizer_logo'] = request.organizer.settings.get('organizer_logo_image', as_type=str, default='')[7:]
+
         ctx['organizer_homepage_text'] = request.organizer.settings.get(
             'organizer_homepage_text', as_type=LazyI18nString
         )
         ctx['organizer'] = request.organizer
+
+    if hasattr(request, 'organizer'):
+        logo_path = request.organizer.settings.get('organizer_logo_image', as_type=str, default='')
+        ctx['organizer_logo'] = logo_path[7:] if logo_path.startswith('file://') else logo_path
+        ctx['organizer_logo_url'] = default_storage.url(ctx['organizer_logo']) if ctx['organizer_logo'] else None
+
+        header_path = request.organizer.settings.get('organizer_header_image', as_type=str, default='')
+        ctx['organizer_header'] = header_path[7:] if header_path.startswith('file://') else header_path
+        ctx['organizer_header_url'] = default_storage.url(ctx['organizer_header']) if ctx['organizer_header'] else None
 
     ctx['base_path'] = settings.BASE_PATH
 
@@ -167,6 +190,7 @@ def _default_context(request):
     ctx['global_settings'] = {
         'leaflet_tiles': global_settings.get('leaflet_tiles'),
         'leaflet_tiles_attribution': global_settings.get('leaflet_tiles_attribution'),
+        'reservation_time': global_settings.get('reservation_time', default=30) or 30,
     }
     ctx['django_settings'] = settings
 

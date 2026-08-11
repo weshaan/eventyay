@@ -5,9 +5,9 @@ import pytest
 from django.utils.timezone import now
 from django_scopes import scopes_disabled
 
-from pretix.base.models import (
+from eventyay.base.models import (
     Event,
-    Item,
+    Product as Item,
     Order,
     OrderPayment,
     OrderPosition,
@@ -17,7 +17,7 @@ from pretix.base.models import (
     Team,
     User,
 )
-from pretix.plugins.banktransfer.models import BankImportJob, BankTransaction
+from eventyay.plugins.banktransfer.models import BankImportJob, BankTransaction
 
 
 @pytest.fixture
@@ -28,10 +28,15 @@ def env():
         name='Dummy',
         slug='dummy',
         date_from=now(),
-        plugins='pretix.plugins.banktransfer',
+        plugins='eventyay.plugins.banktransfer',
     )
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
-    t = Team.objects.create(organizer=event.organizer, can_view_orders=True, can_change_orders=True)
+    t = Team.objects.create(
+        organizer=event.organizer,
+        can_view_orders=True,
+        can_change_orders=True,
+        can_manage_bank_transfers=True,
+    )
     t.members.add(user)
     t.limit_events.add(event)
     o1 = Order.objects.create(
@@ -364,7 +369,7 @@ def test_assign_order_organizer_no_permission(env, client):
         date='unknown',
     )
     team = env[1].teams.first()
-    team.can_change_orders = False
+    team.can_manage_bank_transfers = False
     team.save()
     client.login(email='dummy@dummy.dummy', password='dummy')
     r = client.post(

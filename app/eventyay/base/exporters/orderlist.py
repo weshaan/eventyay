@@ -69,6 +69,7 @@ class OrderListExporter(MultiSheetListExporter):
 
     @property
     def additional_form_fields(self):
+        prefix = f'#id_{self.identifier}'
         d = [
             (
                 'paid_only',
@@ -77,7 +78,7 @@ class OrderListExporter(MultiSheetListExporter):
                     initial=True,
                     required=False,
                     widget=forms.CheckboxInput(
-                        attrs={'data-inverse-dependency': '#id_orderlist-approval_pending_only'}
+                        attrs={'data-inverse-dependency': f'{prefix}-approval_pending_only'}
                     ),
                 ),
             ),
@@ -87,7 +88,7 @@ class OrderListExporter(MultiSheetListExporter):
                     label=_('Only approval pending orders'),
                     initial=False,
                     required=False,
-                    widget=forms.CheckboxInput(attrs={'data-inverse-dependency': '#id_orderlist-paid_only'}),
+                    widget=forms.CheckboxInput(attrs={'data-inverse-dependency': f'{prefix}-paid_only'}),
                 ),
             ),
             (
@@ -97,7 +98,7 @@ class OrderListExporter(MultiSheetListExporter):
                     initial=False,
                     required=False,
                     widget=forms.CheckboxInput(
-                        attrs={'data-inverse-dependency': '#id_orderlist-approval_pending_only'}
+                        attrs={'data-inverse-dependency': f'{prefix}-approval_pending_only'}
                     ),
                 ),
             ),
@@ -846,6 +847,13 @@ class OrderListExporter(MultiSheetListExporter):
             _('Payment providers'),
         ]
 
+        try:
+            from eventyay.plugins.badges.utils import get_badge_visible_field_values
+            badge_support = True
+            headers.append(_('Badge options'))
+        except ImportError:
+            badge_support = False
+
         yield headers
 
         all_ids = list(base_qs.order_by('order__datetime', 'positionid').values_list('pk', flat=True))
@@ -1003,13 +1011,56 @@ class OrderListExporter(MultiSheetListExporter):
                         ]
                     )
                 )
+
+                if badge_support:
+                    badge_values = get_badge_visible_field_values(self.event_object_cache[order.event_id], op)
+                    row.append(', '.join(badge_values) if badge_values else '')
+
                 yield row
 
     def get_filename(self):
         if self.is_multievent:
-            return '{}_orders'.format(self.events.first().organizer.slug)
+            return f'{self.events.first().organizer.slug}_orders'
         else:
-            return '{}_orders'.format(self.event.slug)
+            return f'{self.event.slug}_orders'
+
+
+class OrderPositionListExporter(OrderListExporter):
+    identifier = 'orderpositionlist'
+    verbose_name = gettext_lazy('Order positions')
+
+    @property
+    def export_form_fields(self) -> dict:
+        ff = OrderedDict(
+            [
+                (
+                    '_format',
+                    forms.ChoiceField(
+                        label=_('Export format'),
+                        choices=(
+                            ('xlsx', _('Excel (.xlsx)')),
+                            ('default', _('CSV (with commas)')),
+                            ('csv-excel', _('CSV (Excel-style)')),
+                            ('semicolon', _('CSV (with semicolons)')),
+                        ),
+                    ),
+                ),
+            ]
+        )
+        ff.update(self.additional_form_fields)
+        return ff
+
+    def iterate_list(self, form_data):
+        yield from self.iterate_positions(form_data)
+
+    def get_filename(self):
+        if self.is_multievent:
+            return f'{self.events.first().organizer.slug}_orderpositions'
+        else:
+            return f'{self.event.slug}_orderpositions'
+
+    def render(self, form_data: dict, output_file=None):
+        return super(MultiSheetListExporter, self).render(form_data, output_file=output_file)
 
 
 class PaymentListExporter(ListExporter):
@@ -1101,9 +1152,9 @@ class PaymentListExporter(ListExporter):
 
     def get_filename(self):
         if self.is_multievent:
-            return '{}_payments'.format(self.events.first().organizer.slug)
+            return f'{self.events.first().organizer.slug}_payments'
         else:
-            return '{}_payments'.format(self.event.slug)
+            return f'{self.event.slug}_payments'
 
 
 class QuotaListExporter(ListExporter):
@@ -1166,7 +1217,7 @@ class QuotaListExporter(ListExporter):
             yield row
 
     def get_filename(self):
-        return '{}_quotas'.format(self.event.slug)
+        return f'{self.event.slug}_quotas'
 
 
 class GiftcardRedemptionListExporter(ListExporter):
@@ -1217,9 +1268,9 @@ class GiftcardRedemptionListExporter(ListExporter):
 
     def get_filename(self):
         if self.is_multievent:
-            return '{}_giftcardredemptions'.format(self.events.first().organizer.slug)
+            return f'{self.events.first().organizer.slug}_giftcardredemptions'
         else:
-            return '{}_giftcardredemptions'.format(self.event.slug)
+            return f'{self.event.slug}_giftcardredemptions'
 
 
 def generate_GiftCardListExporter(organizer):  # hackhack
@@ -1345,7 +1396,7 @@ def generate_GiftCardListExporter(organizer):  # hackhack
                 yield row
 
         def get_filename(self):
-            return '{}_giftcards'.format(organizer.slug)
+            return f'{organizer.slug}_giftcards'
 
     return GiftcardListExporter
 
@@ -1358,6 +1409,16 @@ def register_orderlist_exporter(sender, **kwargs):
 @receiver(register_multievent_data_exporters, dispatch_uid='multiexporter_orderlist')
 def register_multievent_orderlist_exporter(sender, **kwargs):
     return OrderListExporter
+
+
+@receiver(register_data_exporters, dispatch_uid='exporter_orderpositionlist')
+def register_orderpositionlist_exporter(sender, **kwargs):
+    return OrderPositionListExporter
+
+
+@receiver(register_multievent_data_exporters, dispatch_uid='multiexporter_orderpositionlist')
+def register_multievent_orderpositionlist_exporter(sender, **kwargs):
+    return OrderPositionListExporter
 
 
 @receiver(register_data_exporters, dispatch_uid='exporter_paymentlist')

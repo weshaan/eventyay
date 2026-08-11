@@ -508,10 +508,15 @@ $(function () {
     });
 
     $(".table-calendar td.has-events").click(function () {
+        if (window.innerWidth > 767) {
+            return;
+        }
         var $tr = $(this).closest(".table-calendar").find(".selected-day");
         $tr.find("td").html($(this).find(".events").html());
         $tr.find("td").prepend($("<h3>").text($(this).attr("data-date")));
         $tr.show();
+        $(this).closest(".table-calendar").find("td.day").removeClass("selected-day-cell");
+        $(this).addClass("selected-day-cell");
     });
 
     $(".print-this-page").on("click", function (e) {

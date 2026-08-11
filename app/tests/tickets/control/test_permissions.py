@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 from django.utils.timezone import now
 
-from pretix.base.models import Event, Order, Organizer, Team, User
+from eventyay.base.models import Event, Order, Organizer, Team, User
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def env():
         name='Dummy',
         slug='dummy',
         date_from=now(),
-        plugins='pretix.plugins.banktransfer',
+        plugins='eventyay.plugins.banktransfer',
     )
     user = User.objects.create_user('dummy@dummy.dummy', 'dummy')
     Order.objects.create(
@@ -42,6 +42,12 @@ superuser_urls = [
     'admin/users/1/impersonate',
     'admin/users/1/reset',
     'admin/sudo/sessions/',
+    'admin/organizers/',
+    'admin/events/',
+    'admin/attendees/',
+    'admin/submissions/',
+    'admin/task_management',
+    'admin/global/message/',
 ]
 
 staff_urls = [
@@ -236,7 +242,7 @@ def test_wrong_event(perf_patch, client, env, url):
         name='Dummy',
         slug='dummy2',
         date_from=now(),
-        plugins='pretix.plugins.banktransfer',
+        plugins='eventyay.plugins.banktransfer',
     )
     t = Team.objects.create(organizer=env[2], can_change_event_settings=True)
     t.members.add(env[1])
@@ -333,12 +339,12 @@ event_permission_urls = [
     ('can_change_event_settings', 'checkinlists/1/change', 404),
     ('can_change_event_settings', 'checkinlists/1/delete', 404),
     # bank transfer
-    ('can_change_orders', 'banktransfer/import/', 200),
-    ('can_change_orders', 'banktransfer/job/1/', 404),
-    ('can_change_orders', 'banktransfer/action/', 200),
-    ('can_change_orders', 'banktransfer/refunds/', 200),
-    ('can_change_orders', 'banktransfer/export/1/', 404),
-    ('can_change_orders', 'banktransfer/sepa-export/1/', 404),
+    ('can_manage_bank_transfers', 'banktransfer/import/', 200),
+    ('can_manage_bank_transfers', 'banktransfer/job/1/', 404),
+    ('can_manage_bank_transfers', 'banktransfer/action/', 200),
+    ('can_manage_bank_transfers', 'banktransfer/refunds/', 200),
+    ('can_manage_bank_transfers', 'banktransfer/export/1/', 404),
+    ('can_manage_bank_transfers', 'banktransfer/sepa-export/1/', 404),
 ]
 
 
@@ -362,7 +368,7 @@ def test_limited_event_permission_for_other_event(perf_patch, client, env, perm,
         name='Dummy',
         slug='dummy2',
         date_from=now(),
-        plugins='pretix.plugins.banktransfer',
+        plugins='eventyay.plugins.banktransfer',
     )
     t = Team.objects.create(organizer=env[2], can_change_event_settings=True)
     t.members.add(env[1])
@@ -455,12 +461,12 @@ organizer_permission_urls = [
     ('can_manage_gift_cards', 'organizer/dummy/giftcard/1/', 404),
     ('can_manage_gift_cards', 'organizer/dummy/giftcard/1/edit', 404),
     # bank transfer
-    ('can_change_orders', 'organizer/dummy/banktransfer/import/', 200),
-    ('can_change_orders', 'organizer/dummy/banktransfer/job/1/', 404),
-    ('can_change_orders', 'organizer/dummy/banktransfer/action/', 200),
-    ('can_change_orders', 'organizer/dummy/banktransfer/refunds/', 200),
-    ('can_change_orders', 'organizer/dummy/banktransfer/export/1/', 404),
-    ('can_change_orders', 'organizer/dummy/banktransfer/sepa-export/1/', 404),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/import/', 200),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/job/1/', 404),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/action/', 200),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/refunds/', 200),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/export/1/', 404),
+    ('can_manage_bank_transfers', 'organizer/dummy/banktransfer/sepa-export/1/', 404),
 ]
 
 
