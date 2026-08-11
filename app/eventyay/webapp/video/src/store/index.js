@@ -43,7 +43,7 @@ export default new Vuex.Store({
 				.map((d) => normalizeIframeConsentDomain(d))
 				.filter(Boolean)
 		),
-		youtubeTranslation: null,
+		youtubeTranslationsByRoom: {},
 		interpretationTtsActive: false,
 		interpretationTtsVolume: 1,
 		interpretationTtsMuted: false,
@@ -116,8 +116,12 @@ export default new Vuex.Store({
 		updateNow(state) {
 			state.now = moment()
 		},
-		updateYoutubeTransAudio(state, youtubeTranslation) {
-			state.youtubeTranslation = youtubeTranslation
+		updateYoutubeTransAudio(state, { roomId, youtubeTranslation }) {
+			if (!roomId) return
+			state.youtubeTranslationsByRoom = {
+				...state.youtubeTranslationsByRoom,
+				[roomId]: youtubeTranslation,
+			}
 		},
 		setInterpretationTtsActive(state, active) {
 			state.interpretationTtsActive = !!active
